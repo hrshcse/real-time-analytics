@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"],
+    "types": []
+  },
+  // Only worker entry files. Anything they import (src/processing, @rta/shared) is checked
+  // here too, under worker types, so those modules must not use DOM APIs.
+  "include": ["src/**/*.worker.ts"]
+}

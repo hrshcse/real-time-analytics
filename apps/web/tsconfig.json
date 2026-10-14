@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
+  },
+  "include": ["src", "vite.config.ts"],
+  // Worker entry files are checked by tsconfig.worker.json: the DOM and WebWorker libs
+  // conflict (TS6200) and can't be loaded in one program.
+  "exclude": ["src/**/*.worker.ts"]
+}
