@@ -1,4 +1,4 @@
-import type { IncomingMessage } from 'node:http';
+import { createServer as createHttpServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Config } from './config';
@@ -16,9 +16,28 @@ const TOKEN_PREFIX = 'token.';
  */
 export function createServer(config: Config, log: (msg: string) => void = console.log) {
   const perIp = new Map<string, number>();
+  const startedAt = Date.now();
+
+  // Plain HTTP on the same port: GET /healthz for platform health checks (Azure, Render, Docker).
+  // Everything else that isn't a WebSocket upgrade gets 426 Upgrade Required.
+  const http = createHttpServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/healthz') {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          connections: wss.clients.size,
+          uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+        }),
+      );
+      return;
+    }
+    res.writeHead(426, { 'content-type': 'text/plain', upgrade: 'websocket' });
+    res.end('WebSocket endpoint. Connect with ws:// or wss://');
+  });
 
   const wss = new WebSocketServer({
-    port: config.port,
+    server: http,
     // Reject browsers from unexpected origins. Non-browser clients (no Origin header) are allowed
     // so scripts/tests can connect; the auth placeholder covers those.
     verifyClient: (
@@ -104,7 +123,7 @@ export function createServer(config: Config, log: (msg: string) => void = consol
   }, 15_000);
 
   const ready = new Promise<number>((resolve) =>
-    wss.on('listening', () => resolve((wss.address() as AddressInfo).port)),
+    http.listen(config.port, () => resolve((http.address() as AddressInfo).port)),
   );
 
   return {
@@ -113,7 +132,7 @@ export function createServer(config: Config, log: (msg: string) => void = consol
     close(): Promise<void> {
       clearInterval(pingTimer);
       for (const ws of wss.clients) ws.close(1001, 'Server shutting down');
-      return new Promise((resolve) => wss.close(() => resolve()));
+      return new Promise((resolve) => wss.close(() => http.close(() => resolve())));
     },
   };
 }

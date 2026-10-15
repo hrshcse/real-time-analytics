@@ -19,7 +19,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:e2e": "npm run test:e2e -w @rta/web"
+    "test:e2e": "npm run test:e2e -w @rta/web",
+    "check:bundle": "node scripts/check-bundle-size.mjs",
+    "test:perf": "npm run test:perf -w @rta/web"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

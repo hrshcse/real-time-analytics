@@ -1,0 +1,10 @@
+{
+  "$comment": "Gzipped size budgets for apps/web/dist (WBS 21.2). Measured 2026-10-15: main JS 129.8 KB, worker 5.9 KB, CSS 2.6 KB. Raise deliberately, with a note in docs/PERFORMANCE.md.",
+  "bundles": [
+    { "name": "main JS", "pattern": "^index-.*\\.js$", "maxGzipKB": 150 },
+    { "name": "worker JS", "pattern": "^processor\\.worker-.*\\.js$", "maxGzipKB": 8 },
+    { "name": "CSS", "pattern": "\\.css$", "maxGzipKB": 6 }
+  ],
+  "totalMaxGzipKB": 165,
+  "forbiddenStrings": [{ "text": "Leak lab", "reason": "dev-only Leak Lab must not ship (D31)" }]
+}

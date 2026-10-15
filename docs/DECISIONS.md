@@ -280,3 +280,29 @@ No mocked backend: the suite starts the actual WebSocket server and Vite. Drops 
 are injected with Playwright's WebSocket routing (forward to the real server, then close with a
 chosen code). Two tests had to account for React StrictMode's extra dev-only socket: "drop the
 connection that's live", not "the first one".
+
+---
+
+## Phase 8
+
+### D38. Two performance gates: bundle size (static) and runtime (browser) — Claude
+
+`perf-budget.json` + `scripts/check-bundle-size.mjs` fail CI when gzip sizes exceed budgets
+(~15% headroom over measured) or when dev-only code ships. `e2e-perf/perf.spec.ts` runs the
+production build at 200 frames/s and fails on FPS < 40, > 10 publishes/s, > 40 in-flight frames,
+heap > 60 MB or > 5 long tasks; a second test proves the gate would catch the naive renderer.
+Budgets are looser than measured values so shared CI runners don't flake. Lighthouse was skipped:
+it measures page load, and this app's risk is sustained runtime load.
+
+### D39. Server on a container host, web on Vercel; `/healthz` on the same port — Claude
+
+WebSockets need a long-lived process, which serverless functions aren't. The server now creates
+its own HTTP server so platforms get a 200 health check on the WebSocket port; any other plain
+HTTP request gets 426. Verified: replayed the Dockerfile's install/build steps, ran the bundle,
+`/healthz` → 200, WebSocket `hello` received. (No Docker daemon was available, so the image
+itself wasn't built here; CI builds it.)
+
+### D40. Deploy jobs skip themselves until secrets exist — Claude
+
+The deploy workflow is safe to merge before Vercel or Azure are set up: each job checks for its
+secrets and logs a skip instead of failing. Workflows were validated with actionlint.

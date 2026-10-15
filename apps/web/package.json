@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.e2e.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:perf": "playwright test -c playwright.perf.config.ts"
   },
   "dependencies": {
     "@rta/shared": "^0.0.0",

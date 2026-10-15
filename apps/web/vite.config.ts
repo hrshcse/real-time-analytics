@@ -38,7 +38,7 @@ export default defineConfig({
   worker: { format: 'es' },
   test: {
     environment: 'jsdom',
-    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+    exclude: ['e2e/**', 'e2e-perf/**', 'node_modules/**', 'dist/**'],
     setupFiles: ['./src/test/setup.ts'],
   },
 });

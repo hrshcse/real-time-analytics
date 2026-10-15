@@ -50,6 +50,16 @@ function outcome(url: string, opts: { protocols?: string[]; origin?: string } = 
   });
 }
 
+describe('health endpoint (deployment)', () => {
+  it('GET /healthz → 200 with connection count; other HTTP → 426', async () => {
+    const port = await start();
+    const ok = await fetch(`http://127.0.0.1:${port}/healthz`);
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ status: 'ok', connections: 0 });
+    expect((await fetch(`http://127.0.0.1:${port}/`)).status).toBe(426);
+  });
+});
+
 describe('server security (WBS 20)', () => {
   it('rejects an unknown browser origin at the handshake', async () => {
     const port = await start();
