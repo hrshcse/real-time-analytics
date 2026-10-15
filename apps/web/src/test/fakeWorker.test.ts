@@ -56,3 +56,13 @@ describe('createFakeWorker', () => {
     expect(error).toBe('boom');
   });
 });
+
+describe('createFakeWorker cleanup', () => {
+  it('runs the script cleanup on terminate', () => {
+    let cleaned = 0;
+    const worker = createFakeWorker<In, Out>(() => () => cleaned++);
+    worker.terminate();
+    worker.terminate();
+    expect(cleaned).toBe(1);
+  });
+});

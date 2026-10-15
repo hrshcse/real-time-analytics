@@ -1,7 +1,7 @@
 # Real-Time Analytics Dashboard
 
 High-volume streaming dashboard: WebSocket → Web Worker → aggregation/downsampling → React.
-Plan: [`docs/WBS.md`](docs/WBS.md) · Wire protocol: [`docs/PROTOCOL.md`](docs/PROTOCOL.md) · Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md) · Tasks: [`docs/tasks/`](docs/tasks)
+Plan: [`docs/WBS.md`](docs/WBS.md) · Wire protocol: [`docs/PROTOCOL.md`](docs/PROTOCOL.md) · Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md) · Measurements: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) · Tasks: [`docs/tasks/`](docs/tasks)
 
 ## Stack (versions as scaffolded, Oct 2026)
 
@@ -58,3 +58,8 @@ Server fault injection (in `apps/server/.env`):
 - `BAD_FRAME_PCT=10` — 10% of frames are truncated, invalid JSON
 
 Stop the server (Ctrl+C) to simulate a disconnect.
+
+Experiments:
+
+- `TICK_MS=5` (server `.env`) → 200 frames/sec instead of 20, to stress per-frame costs
+- `VITE_BUFFER_MS=0` (`apps/web/.env.local`) → no frame buffering, one `postMessage` per frame

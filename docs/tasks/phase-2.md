@@ -1,5 +1,13 @@
 # Phase 2 — Data processing (WBS 4–5)
 
+> **Status: implemented by Claude (2026-10-14) at BK's request.** Decisions D12–D16 are in
+> [`../DECISIONS.md`](../DECISIONS.md), marked _BK to confirm_. Measurements in
+> [`../PERFORMANCE.md`](../PERFORMANCE.md). Where to look:
+> Task C → `src/workers/contract.ts`, `processor.ts`, `runtime.ts`, `ws/connection.ts` ·
+> Task D → `src/ws/frameBuffer.ts` · Task E → `src/processing/aggregate.ts`.
+> One change from this brief: the worker survives unexpected closes and is terminated only by
+> Disconnect (D16), so totals carry across a server restart.
+
 Decision in force: **D7 — socket on the main thread, processing in the worker.**
 Order: **C → D → E** (each builds on the previous). Ask when unclear; say "Claude, take this" for
 anything familiar.

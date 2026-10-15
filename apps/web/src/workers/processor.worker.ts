@@ -1,16 +1,13 @@
 /**
- * Processing worker — Task C (BK) builds this out. See docs/tasks/phase-2.md.
+ * Processing worker entry (WBS 4.1). Kept thin: all logic is in processor.ts / runtime.ts so it
+ * can be unit-tested without a real Worker.
  *
- * This stub exists so the worker toolchain (tsconfig.worker.json, ESLint worker globals,
- * Vite worker bundling) is verified before real code goes in. It's not wired up yet.
- *
- * Load it from the main thread with exactly this form, so Vite can detect and bundle it:
+ * Loaded from ws/connection.ts with exactly this form, so Vite can detect and bundle it:
  *   new Worker(new URL('../workers/processor.worker.ts', import.meta.url), { type: 'module' })
+ *
+ * Type-checked by tsconfig.worker.json (WebWorker lib, no DOM).
  */
-import { parseServerMessage } from '../processing';
+import { startWorkerRuntime, type WorkerScopeLike } from './runtime';
 
-self.onmessage = (event: MessageEvent<unknown>) => {
-  // `self` here is the worker scope (lib: WebWorker): postMessage takes no targetOrigin.
-  // Importing ../processing means tsconfig.worker.json also checks that folder is DOM-free.
-  self.postMessage({ type: 'echo', parsedType: parseServerMessage(event.data)?.type ?? null });
-};
+// `self` is DedicatedWorkerGlobalScope here; it structurally matches WorkerScopeLike.
+startWorkerRuntime(self as unknown as WorkerScopeLike);

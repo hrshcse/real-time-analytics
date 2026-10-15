@@ -5,9 +5,11 @@
  * Mirrors the real behaviour that matters:
  *   - messages are COPIED (structuredClone): mutating an object after postMessage doesn't
  *     affect what the other side received, and functions/class instances can't be sent
- *   - delivery is async (next macrotask): use fake timers + vi.advanceTimersByTime(0),
- *     or `await flush()`
- *   - after terminate(), nothing is delivered in either direction
+ *   - delivery is async (next macrotask, via setTimeout 0): with fake timers use
+ *     vi.advanceTimersByTime(1) — fake timers treat a 0 ms timeout as 1 ms, so (0) does
+ *     NOT deliver; with real timers `await flush()`
+ *   - after terminate(), nothing is delivered in either direction, and the cleanup function
+ *     returned by `script` runs (a real terminate() kills the worker's timers)
  *
  * Usage:
  *   const worker = createFakeWorker<MainToWorker, WorkerToMain>((scope) => {
@@ -38,7 +40,7 @@ export interface FakeWorker<In, Out> {
 const nextTask = (fn: () => void) => setTimeout(fn, 0);
 
 export function createFakeWorker<In, Out>(
-  script: (scope: FakeWorkerScope<In, Out>) => void,
+  script: (scope: FakeWorkerScope<In, Out>) => void | (() => void),
 ): FakeWorker<In, Out> {
   let terminated = false;
   let postedToWorker = 0;
@@ -66,7 +68,9 @@ export function createFakeWorker<In, Out>(
       });
     },
     terminate() {
+      if (terminated) return;
       terminated = true;
+      cleanup?.();
     },
     crash(message) {
       if (terminated) return;
@@ -83,7 +87,8 @@ export function createFakeWorker<In, Out>(
     },
   };
 
-  script(scope);
+  // Declared after `worker` on purpose: terminate() only reads it once script() has returned.
+  const cleanup = script(scope);
   return worker;
 }
 

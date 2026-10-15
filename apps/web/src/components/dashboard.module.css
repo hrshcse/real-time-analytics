@@ -142,3 +142,84 @@
 .reasons code {
   color: var(--text);
 }
+
+/* ---------- sections ---------- */
+.sectionTitle {
+  margin: 24px 0 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.grid + .reasons,
+section + .reasons {
+  margin-top: 12px;
+}
+
+.hint {
+  margin: 4px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+/* ---------- worker error ---------- */
+.banner {
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--bad);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+/* ---------- aggregates table ---------- */
+.tableSection {
+  margin-top: 8px;
+}
+
+.tableHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.table th[scope='row'],
+.table thead th:first-child {
+  text-align: left;
+}
+
+.table thead th {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.unit {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .tableSection {
+    overflow-x: auto;
+  }
+}
