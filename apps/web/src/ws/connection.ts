@@ -25,6 +25,12 @@ import { createStore, type ReadableStore } from './store';
  * Socket on the main thread, processing in the worker (D7). Batch frames are recognised by
  * prefix so the main thread never parses them (D12). The worker lives from connect() to
  * disconnect(), surviving unexpected closes so totals/aggregates carry over (D16).
+ *
+ * Backpressure (WBS 10): the worker acks every frames message; while more than
+ * maxInFlightFrames are unacknowledged the buffer holds new frames, dropping the oldest past
+ * its cap. Render batching (WBS 10.4): a 250 ms tick decides whether anything changed, then
+ * publishes on the next animation frame ('raf'). 'immediate' publishes on every message: the
+ * naive baseline for experiment 15.4.
  */
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
@@ -62,6 +68,16 @@ export interface ConnectionStats {
   processing: { batches: number; avgMs: number; maxMs: number } | null;
   /** Main-thread JS heap (Chrome-only `performance.memory`); null where unsupported. */
   heapMB: number | null;
+  /** Frames posted to the worker but not yet acknowledged. */
+  inFlightFrames: number;
+  /** Frames dropped on the main thread by backpressure (oldest first). */
+  backpressureDropped: number;
+  /** Main-thread ms per second spent in socket + worker message handlers. */
+  mainMsPerSec: number;
+  /** Snapshot publishes (≈ React renders of the dashboard) per second. */
+  publishesPerSec: number;
+  /** Age of the newest processed event: how far behind live the dashboard is. */
+  dataLagMs: number | null;
 }
 
 export interface ConnectionSnapshot {
@@ -91,13 +107,32 @@ export interface Connection {
   setView(view: ChartView | null): void;
   /** What the grid wants (null = grid hidden). Remembered across worker restarts. */
   queryGrid(query: GridQuery | null, live: boolean): void;
+  /** Experiment switches (WBS 10, 15.4). */
+  setPublishMode(mode: PublishMode): void;
+  setBackpressure(enabled: boolean): void;
+  setSimulatedWorkMs(ms: number): void;
+  readonly experiments: Readonly<ExperimentState>;
+}
+
+export type PublishMode = 'raf' | 'immediate';
+
+export interface ExperimentState {
+  publishMode: PublishMode;
+  backpressure: boolean;
+  simulatedWorkMs: number;
 }
 
 export interface ConnectionOptions {
   /** How often the snapshot is published to subscribers. Status changes publish immediately. */
   publishIntervalMs?: number;
   /** Frame buffer limits (Task D). */
-  buffer?: Omit<FrameBufferOptions, 'onFlush'>;
+  buffer?: Omit<FrameBufferOptions, 'onFlush' | 'budget'>;
+  /** Hold the buffer while more than this many frames are unacknowledged. */
+  maxInFlightFrames?: number;
+  publishMode?: PublishMode;
+  /** Injectable frame scheduler (default requestAnimationFrame). */
+  scheduleFrame?: (cb: () => void) => number;
+  cancelFrame?: (id: number) => void;
   /** Injectable for tests. */
   WebSocketImpl?: typeof WebSocket;
   createWorker?: () => Worker;
@@ -126,6 +161,22 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
   const WS = options.WebSocketImpl ?? WebSocket;
   const createWorker = options.createWorker ?? defaultCreateWorker;
   const now = options.now ?? Date.now;
+  const maxInFlight = options.maxInFlightFrames ?? 32;
+  const hasRaf = typeof requestAnimationFrame === 'function';
+  const scheduleFrame =
+    options.scheduleFrame ??
+    (hasRaf
+      ? (cb: () => void) => requestAnimationFrame(cb)
+      : (cb: () => void) => setTimeout(cb, 16) as unknown as number);
+  const cancelFrame =
+    options.cancelFrame ??
+    (hasRaf ? (id: number) => cancelAnimationFrame(id) : (id: number) => clearTimeout(id));
+  const perfNow = () => performance.now();
+  const experiments: ExperimentState = {
+    publishMode: options.publishMode ?? 'raf',
+    backpressure: true,
+    simulatedWorkMs: 0,
+  };
 
   // ---- mutable state, never read by React directly ----
   let socket: WebSocket | null = null;
@@ -149,13 +200,25 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     malformedFrames: 0,
     droppedOnDisconnect: 0,
     lastMessageAt: null as number | null,
+    postedFrames: 0,
+    ackedFrames: 0,
+    mainMs: 0,
+    publishes: 0,
   };
   const framesRate = createRateMeter(1000);
   const postsRate = createRateMeter(1000);
+  const mainMsRate = createRateMeter(1000);
+  const publishRate = createRateMeter(1000);
+  let frameHandle: number | null = null;
 
+  const inFlight = () => main.postedFrames - main.ackedFrames;
   const buffer = createFrameBuffer({
     ...options.buffer,
-    onFlush: (frames) => post({ type: 'frames', raw: frames }),
+    budget: () => (experiments.backpressure ? maxInFlight - inFlight() : Infinity),
+    onFlush: (frames) => {
+      main.postedFrames += frames.length;
+      post({ type: 'frames', raw: frames });
+    },
   });
 
   function post(message: MainToWorker) {
@@ -201,6 +264,11 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
         lastMessageAt: main.lastMessageAt,
         processing,
         heapMB,
+        inFlightFrames: inFlight(),
+        backpressureDropped: buffer.dropped,
+        mainMsPerSec: mainMsRate.rate,
+        publishesPerSec: publishRate.rate,
+        dataLagMs: s?.newestEventAt != null ? Math.max(0, now() - s.newestEventAt) : null,
       },
     };
   }
@@ -208,33 +276,52 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
   /** getSnapshot must return the same object between publishes, or useSyncExternalStore
    *  re-renders forever. */
   function publish() {
+    if (frameHandle !== null) {
+      cancelFrame(frameHandle);
+      frameHandle = null;
+    }
     snapshot = buildSnapshot();
     dirty = false;
+    main.publishes++;
     for (const l of listeners) l();
+  }
+
+  /** Coalesce into one publish on the next animation frame (or right now, in 'immediate'). */
+  function schedulePublish() {
+    if (experiments.publishMode === 'immediate') return publish();
+    if (frameHandle !== null) return;
+    frameHandle = scheduleFrame(() => {
+      frameHandle = null;
+      publish();
+    });
   }
 
   function startPublishing() {
     if (publishTimer !== null) return;
-    framesRate.reset();
-    postsRate.reset();
+    for (const m of [framesRate, postsRate, mainMsRate, publishRate]) m.reset();
     publishTimer = setInterval(() => {
       const at = now();
-      const f = framesRate.rate;
-      const p = postsRate.rate;
-      if (framesRate.sample(at, main.batchFrames) !== f) dirty = true;
-      if (postsRate.sample(at, buffer.flushes) !== p) dirty = true;
+      const before = [framesRate.rate, postsRate.rate, mainMsRate.rate, publishRate.rate];
+      framesRate.sample(at, main.batchFrames);
+      postsRate.sample(at, buffer.flushes);
+      mainMsRate.sample(at, main.mainMs);
+      publishRate.sample(at, main.publishes);
+      const after = [framesRate.rate, postsRate.rate, mainMsRate.rate, publishRate.rate];
+      if (after.some((v, i) => v !== before[i])) dirty = true;
       const mem = readHeapMB();
       if (mem !== heapMB) {
         heapMB = mem;
         dirty = true;
       }
-      if (dirty) publish();
+      if (dirty) schedulePublish();
     }, publishIntervalMs);
   }
 
   function stopPublishing() {
     if (publishTimer !== null) clearInterval(publishTimer);
     publishTimer = null;
+    if (frameHandle !== null) cancelFrame(frameHandle);
+    frameHandle = null;
   }
 
   function setStatus(next: ConnectionStatus) {
@@ -247,16 +334,27 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
   function startWorker() {
     if (worker) return;
     workerError = null;
+    main.postedFrames = 0;
+    main.ackedFrames = 0;
     const w = createWorker();
     worker = w;
     w.onmessage = (event: MessageEvent<WorkerToMain>) => {
       if (worker !== w) return; // stale (terminated) worker
-      const msg = event.data;
+      const t0 = perfNow();
+      handleWorkerMessage(event.data);
+      main.mainMs += perfNow() - t0;
+    };
+    const handleWorkerMessage = (msg: WorkerToMain) => {
       switch (msg.type) {
+        case 'ack':
+          main.ackedFrames += msg.frames;
+          if (buffer.size > 0) buffer.flush(); // backlog cleared: release held frames
+          return;
         case 'summary':
           if (summary && msg.summary.version === summary.version) return;
           summary = msg.summary;
           dirty = true;
+          if (experiments.publishMode === 'immediate') publish();
           return;
         case 'chart':
           chartStore.set(msg.chart);
@@ -277,6 +375,11 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
       publish();
     };
     // A fresh worker knows nothing: replay what the UI currently wants.
+    if (experiments.simulatedWorkMs > 0)
+      w.postMessage({
+        type: 'config',
+        simulatedWorkMs: experiments.simulatedWorkMs,
+      } satisfies MainToWorker);
     if (view) w.postMessage({ type: 'view', view } satisfies MainToWorker);
     if (gridRequest.query) w.postMessage({ type: 'grid', ...gridRequest } satisfies MainToWorker);
   }
@@ -370,7 +473,10 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     };
     ws.onmessage = (event: MessageEvent) => {
       if (socket !== ws) return;
+      const t0 = perfNow();
       handleMessage(event.data);
+      if (experiments.publishMode === 'immediate') publish(); // naive: render per message
+      main.mainMs += perfNow() - t0;
     };
     // `error` carries no details (browser security) and is always followed by `close`,
     // so all state changes happen in onclose.
@@ -434,6 +540,18 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
       gridRequest = { query, live };
       post({ type: 'grid', query, live });
     },
+    setPublishMode(mode) {
+      experiments.publishMode = mode;
+    },
+    setBackpressure(enabled) {
+      experiments.backpressure = enabled;
+      if (!enabled) buffer.flush();
+    },
+    setSimulatedWorkMs(ms) {
+      experiments.simulatedWorkMs = ms;
+      post({ type: 'config', simulatedWorkMs: ms });
+    },
+    experiments,
   };
 }
 

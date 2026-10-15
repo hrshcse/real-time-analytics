@@ -149,3 +149,37 @@ Events are immutable, so "update existing records" (WBS 9.4) reduces to add-new 
 
 A chart update re-renders only the charts; a grid page only the grid. One combined snapshot would
 re-render the whole dashboard for each.
+
+---
+
+## Phase 4
+
+### D21. Backpressure = in-flight budget + drop-oldest queue — Claude
+
+The worker acks each frames message. The main thread posts at most `maxInFlightFrames` (32)
+unacknowledged frames; extra frames wait in the buffer, which keeps at most 64 and drops the
+**oldest** beyond that (WBS 10.3: preserve the latest data). First version only gated _whether_ to
+flush and then sent the whole queue: in-flight sat at 256, not 64. Measured, then fixed by giving
+the buffer a budget (send at most what the worker can take).
+
+Dropped frames show up twice on purpose: `backpressureDropped` (main thread, deliberate) and as
+seq gaps in `missedFrames` (worker). Server-side drops (`serverDropped`) are a third, separate
+layer for a slow socket.
+
+### D22. Publish = 250 ms change check + requestAnimationFrame — Claude
+
+Socket and worker messages only mark state dirty. A 250 ms tick samples the rate meters and, if
+anything changed, schedules one publish on the next animation frame. Status changes still publish
+immediately. In a background tab rAF pauses, so the dashboard stops rendering at no cost. The
+naive "publish on every message" mode stays in the app as the experiment baseline.
+
+### D23. Instrumentation is opt-in and costs nothing when closed — Claude
+
+The Performance panel's FPS loop and long-task observer only run while it's open. React render
+times come from `<Profiler>` writing into plain counters (no setState), drained once a second.
+`<Profiler>` is inert in production builds; the panel says so instead of showing zeros as data.
+
+### D24. A "slow worker" switch instead of a separate load test — Claude
+
+`simulatedWorkMs` busy-waits per frame inside the worker, making "producer faster than consumer"
+(WBS 10.1) reproducible on any machine without changing the server.

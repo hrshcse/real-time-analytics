@@ -24,6 +24,8 @@ export function startWorkerRuntime(scope: WorkerScopeLike, options: WorkerRuntim
   scope.onmessage = (event) => {
     try {
       processor.handle(event.data);
+      if (event.data.type === 'frames')
+        scope.postMessage({ type: 'ack', frames: event.data.raw.length });
       // A grid query is answered immediately: scrolling must not wait for the next tick.
       const page = processor.takeGridPage();
       if (page) scope.postMessage({ type: 'grid', page });

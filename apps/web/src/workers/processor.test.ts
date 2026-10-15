@@ -126,7 +126,9 @@ describe('startWorkerRuntime (through the fake worker)', () => {
       startWorkerRuntime(scope, { now: () => clock, summaryIntervalMs: 250 }),
     );
     const received: WorkerToMain[] = [];
-    worker.onmessage = (e) => received.push(e.data);
+    worker.onmessage = (e) => {
+      if (e.data.type === 'summary') received.push(e.data);
+    };
 
     worker.postMessage({ type: 'frames', raw: [frame(0, [event()])] });
     vi.advanceTimersByTime(250);
@@ -248,5 +250,45 @@ describe('grid', () => {
     p.handle({ type: 'frames', raw: [frame(1, [event()])] });
     clock += 2000;
     expect(p.tick().grid).toBeNull();
+  });
+});
+
+describe('backpressure support', () => {
+  it('reports the newest processed event time', () => {
+    const p = make();
+    p.handle({
+      type: 'frames',
+      raw: [frame(0, [event({ timestamp: clock - 30 }), event({ timestamp: clock - 5 })])],
+    });
+    expect(p.tick().summary!.newestEventAt).toBe(clock - 5);
+  });
+
+  it('simulatedWorkMs makes each frame take at least that long', () => {
+    let t = 0;
+    const p = createProcessor({
+      now: () => clock,
+      perfNow: () => (t += 1),
+      aggregator: { graceMs: 0 },
+    });
+    p.handle({ type: 'config', simulatedWorkMs: 20 });
+    p.handle({ type: 'frames', raw: [frame(0, [event()])] });
+    expect(p.tick().summary!.processing.maxMs).toBeGreaterThanOrEqual(20);
+  });
+});
+
+describe('startWorkerRuntime acks', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('acks every frames message with its frame count', () => {
+    const worker = createFakeWorker<MainToWorker, WorkerToMain>((scope) =>
+      startWorkerRuntime(scope, { now: () => clock }),
+    );
+    const got: WorkerToMain[] = [];
+    worker.onmessage = (e) => got.push(e.data);
+    worker.postMessage({ type: 'frames', raw: [frame(0, []), frame(1, [])] });
+    vi.advanceTimersByTime(2);
+    expect(got).toContainEqual({ type: 'ack', frames: 2 });
+    worker.terminate();
   });
 });

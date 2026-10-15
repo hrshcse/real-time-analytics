@@ -76,3 +76,70 @@ describe('createFrameBuffer', () => {
     expect(b.flushes).toBe(0);
   });
 });
+
+describe('backpressure', () => {
+  it('holds frames while the budget is 0, then flushes on demand', () => {
+    let open = false;
+    const b = createFrameBuffer({
+      maxWaitMs: 10,
+      budget: () => (open ? Infinity : 0),
+      onFlush: (f) => flushed.push(f),
+    });
+    b.push('a');
+    vi.advanceTimersByTime(20);
+    expect(flushed).toEqual([]);
+    expect(b.size).toBe(1);
+    open = true;
+    b.flush();
+    expect(flushed).toEqual([['a']]);
+  });
+
+  it('drops the OLDEST frames beyond maxQueuedFrames and counts them', () => {
+    const b = createFrameBuffer({
+      maxQueuedFrames: 3,
+      maxFrames: 100,
+      budget: () => 0,
+      onFlush: (f) => flushed.push(f),
+    });
+    for (const f of ['1', '2', '3', '4', '5']) b.push(f);
+    expect(b.size).toBe(3);
+    expect(b.dropped).toBe(2);
+    expect(b.clear()).toBe(3);
+  });
+
+  it('keeps the newest frames after overflow', () => {
+    let open = false;
+    const b = createFrameBuffer({
+      maxQueuedFrames: 2,
+      maxFrames: 100,
+      budget: () => (open ? Infinity : 0),
+      onFlush: (f) => flushed.push(f),
+    });
+    for (const f of ['1', '2', '3']) b.push(f);
+    open = true;
+    b.flush();
+    expect(flushed).toEqual([['2', '3']]);
+  });
+});
+
+describe('budget', () => {
+  it('sends at most budget() frames per flush, oldest first, and holds the rest', () => {
+    let budget = 2;
+    const b = createFrameBuffer({
+      maxFrames: 100,
+      maxWaitMs: 1000,
+      budget: () => budget,
+      onFlush: (f) => flushed.push(f),
+    });
+    for (const f of ['1', '2', '3', '4', '5']) b.push(f);
+    b.flush();
+    expect(flushed).toEqual([['1', '2']]);
+    expect(b.size).toBe(3);
+    budget = 10;
+    b.flush();
+    expect(flushed).toEqual([
+      ['1', '2'],
+      ['3', '4', '5'],
+    ]);
+  });
+});

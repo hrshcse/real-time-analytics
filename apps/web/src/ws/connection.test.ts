@@ -341,3 +341,61 @@ describe('chart and grid channels', () => {
     expect(conn.grid.get()?.total).toBe(2);
   });
 });
+
+describe('backpressure (WBS 10)', () => {
+  function setupBp(maxInFlightFrames: number) {
+    conn.disconnect();
+    conn = createConnection('ws://test', {
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+      now: () => clock,
+      buffer: { maxWaitMs: 0, maxQueuedFrames: 5 },
+      maxInFlightFrames,
+      scheduleFrame: (cb) => setTimeout(cb, 16) as unknown as number,
+      cancelFrame: (id) => clearTimeout(id),
+      // A worker that never acks: the slowest possible consumer.
+      createWorker: () => {
+        const w = createFakeWorker<MainToWorker, WorkerToMain>(() => {});
+        workers.push(w);
+        return w.asWorker();
+      },
+    });
+    openWithHello();
+  }
+
+  it('stops posting once maxInFlightFrames are unacknowledged, then drops the oldest', () => {
+    setupBp(3);
+    const posted = () => latestWorker().postedToWorker;
+    const start = posted(); // the reset
+    for (let i = 0; i < 20; i++) latest().serverSend(batch(i, [event()]));
+    expect(posted() - start).toBe(3); // 3 frames in flight, the rest held
+    tick(300); // 250 ms sampling tick + one frame to publish
+    const { stats } = conn.getSnapshot();
+    expect(stats.inFlightFrames).toBe(3);
+    expect(stats.backpressureDropped).toBe(12); // 17 held, cap 5 → 12 oldest dropped
+  });
+
+  it('with backpressure off, everything is posted (unbounded queue in the worker)', () => {
+    setupBp(3);
+    conn.setBackpressure(false);
+    const start = latestWorker().postedToWorker;
+    for (let i = 0; i < 20; i++) latest().serverSend(batch(i, [event()]));
+    expect(latestWorker().postedToWorker - start).toBe(20);
+  });
+});
+
+describe('render batching (WBS 10.4)', () => {
+  it("'immediate' publishes on every socket message; 'raf' at most once per tick", () => {
+    openWithHello();
+    const listener = vi.fn();
+    conn.subscribe(listener);
+    conn.setPublishMode('immediate');
+    for (let i = 0; i < 20; i++) latest().serverSend(batch(i, [event()]));
+    expect(listener.mock.calls.length).toBeGreaterThanOrEqual(20);
+
+    listener.mockClear();
+    conn.setPublishMode('raf');
+    for (let i = 20; i < 40; i++) latest().serverSend(batch(i, [event()]));
+    tick(250);
+    expect(listener.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+});

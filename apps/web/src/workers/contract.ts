@@ -16,6 +16,7 @@ export type { ChartData, ChartView, GridPage, GridQuery };
  *                            ◀──────────  summary (≤ 4/sec, only when changed)
  *                            ◀──────────  chart   (≤ 4/sec, only when changed)
  *                            ◀──────────  grid    (immediately on a query; ≤ 1/sec while live)
+ *                            ◀──────────  ack     (after each frames message: backpressure)
  *                            ◀──────────  error (caught exception; worker keeps running)
  */
 
@@ -26,7 +27,9 @@ export type MainToWorker =
   | { type: 'reset' }
   | { type: 'view'; view: ChartView | null }
   /** live = false freezes the grid's contents (paging still works on the frozen result). */
-  | { type: 'grid'; query: GridQuery | null; live: boolean };
+  | { type: 'grid'; query: GridQuery | null; live: boolean }
+  /** Experiments (WBS 10.1): burn this many ms per frame to simulate a slow consumer. */
+  | { type: 'config'; simulatedWorkMs: number };
 
 export interface ProcessingTime {
   /** Batches processed since the previous summary. */
@@ -54,10 +57,14 @@ export interface WorkerSummary {
   processing: ProcessingTime;
   /** Latest closed bucket per metric, keyed by window size in ms (1000, 5000, …). */
   latest: Record<number, LatestBuckets>;
+  /** Timestamp of the newest event processed. now − this = how stale the dashboard is. */
+  newestEventAt: number | null;
 }
 
 export type WorkerToMain =
   | { type: 'summary'; summary: WorkerSummary }
   | { type: 'chart'; chart: ChartData }
   | { type: 'grid'; page: GridPage }
+  /** Sent after every `frames` message: how many frames were consumed (backpressure). */
+  | { type: 'ack'; frames: number }
   | { type: 'error'; message: string };

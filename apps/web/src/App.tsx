@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { Profiler, useState } from 'react';
 import styles from './App.module.css';
 import { ChartPanel } from './components/ChartPanel';
 import { ConnectionBadge } from './components/ConnectionBadge';
 import { DataGrid } from './components/DataGrid';
 import { KpiCards } from './components/KpiCards';
 import { MetricsTable } from './components/MetricsTable';
+import { PerfPanel } from './components/PerfPanel';
 import { StatsPanel } from './components/StatsPanel';
 import { StreamControls } from './components/StreamControls';
 import dash from './components/dashboard.module.css';
+import { onRenderProfile } from './perf/renderStats';
 import { DEFAULT_VIEW, type ChartView } from './workers/chart';
 import { appConnection, useConnection, type Connection } from './ws';
 
@@ -46,9 +48,16 @@ export function App({ connection = appConnection }: Props) {
             Processing worker error: {workerError}
           </p>
         )}
-        <KpiCards snapshot={snapshot} />
-        <ChartPanel connection={connection} view={view} onViewChange={setView} />
-        <DataGrid connection={connection} />
+        <Profiler id="kpis" onRender={onRenderProfile}>
+          <KpiCards snapshot={snapshot} />
+        </Profiler>
+        <Profiler id="charts" onRender={onRenderProfile}>
+          <ChartPanel connection={connection} view={view} onViewChange={setView} />
+        </Profiler>
+        <Profiler id="grid" onRender={onRenderProfile}>
+          <DataGrid connection={connection} />
+        </Profiler>
+        <PerfPanel connection={connection} stats={stats} />
         <details className={dash.pipeline}>
           <summary>Pipeline details</summary>
           <StatsPanel stats={stats} server={server} />

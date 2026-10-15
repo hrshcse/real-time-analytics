@@ -99,3 +99,43 @@ the worker. ("None" still spends time building the index array it passes through
 |   1 |             319 |        13 (4%) | 230 (72%) |
 |   2 |             339 |       33 (10%) | 240 (71%) |
 |   3 |             325 |        24 (7%) | 228 (70%) |
+
+## Phase 4 measurements
+
+Same environment (headless Chromium, Linux container, **dev build**), measured 2026-10-15.
+Server `TICK_MS=5` (200 frames/s), 10K events/s. Values read from the in-app Performance panel
+and Chrome DevTools Protocol `Performance.getMetrics`.
+
+### Experiment 15.4 — Render batching
+
+| Render mode                  | Publishes/s | React commits/s |    FPS | Long tasks (10 s) | Main task ms/s | Main script ms/s |
+| ---------------------------- | ----------: | --------------: | -----: | ----------------: | -------------: | ---------------: |
+| Batched (250 ms check + rAF) |           4 |              15 | **60** |                 0 |            244 |              179 |
+| Every message (naive)        |         162 |             526 |  **9** |                 0 |            964 |              925 |
+
+Naive mode keeps the main thread ~96% busy and drops to 9 FPS **without a single long task**:
+hundreds of small renders, each under 50 ms. Long-task counts alone would miss this; FPS and
+main-thread time show it. Interaction timing (10 clicks on "Pause chart", Event Timing API):
+worst interaction 32 ms in both modes. Ten clicks is too small a sample to separate them; treat
+it as inconclusive, not as "no difference".
+
+The panel's own "Main thread ms/s" (≈ 3 in batched mode) counts only the socket and worker
+message handlers; the DevTools figure above includes React, Chart.js and dev-build overhead.
+
+### Experiment 10.1 — Backpressure with a slow consumer
+
+Worker slowed to +10 ms per frame (capacity ≈ 100 frames/s) while 200 frames/s arrive.
+
+|    t | Off: in-flight | Off: data lag | On: in-flight | On: data lag | On: frames dropped (cumulative) |
+| ---: | -------------: | ------------: | ------------: | -----------: | ------------------------------: |
+|  5 s |            473 |         3.3 s |            32 |        0.7 s |                             374 |
+| 10 s |            925 |         6.5 s |            32 |        0.9 s |                             824 |
+| 15 s |          1,383 |         8.1 s |            32 |        0.9 s |                           1,270 |
+| 20 s |          1,849 |        13.1 s |            32 |        0.7 s |                           1,719 |
+
+Without backpressure the queue grows ~92 frames/s and the dashboard falls further behind live
+every second, without bound (the backlog lives in the worker's message queue, so main-thread heap
+doesn't show it). With backpressure in-flight is capped, lag is stable under 1 s, and the cost is
+explicit: ~86 frames/s dropped, counted and shown.
+
+First attempt (before the budget fix in D21): in-flight stuck at 256 and lag ~4 s.

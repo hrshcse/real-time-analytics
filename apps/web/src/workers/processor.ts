@@ -58,6 +58,8 @@ export function createProcessor(options: ProcessorOptions = {}) {
   let processing: ProcessingTime = { batches: 0, totalMs: 0, maxMs: 0 };
   let version = 0;
   let changed = false;
+  let simulatedWorkMs = 0;
+  let newestEventAt: number | null = null;
 
   // chart state
   let view: ChartView | null = null;
@@ -89,6 +91,16 @@ export function createProcessor(options: ProcessorOptions = {}) {
     aggregator.add(valid);
     store.push(valid);
     totalEvents += valid.length;
+    const last = valid[valid.length - 1];
+    if (last && (newestEventAt === null || last.timestamp > newestEventAt))
+      newestEventAt = last.timestamp;
+
+    if (simulatedWorkMs > 0) {
+      const until = perfNow() + simulatedWorkMs;
+      while (perfNow() < until) {
+        // busy-wait on purpose: a slow consumer for the backpressure experiment
+      }
+    }
 
     const ms = perfNow() - t0;
     processing.batches++;
@@ -135,6 +147,7 @@ export function createProcessor(options: ProcessorOptions = {}) {
       lateEvents: aggregator.lateEvents,
       processing,
       latest,
+      newestEventAt,
     };
     processing = { batches: 0, totalMs: 0, maxMs: 0 }; // per-summary window
     return summary;
@@ -157,6 +170,9 @@ export function createProcessor(options: ProcessorOptions = {}) {
         case 'view':
           view = message.view;
           viewChanged = true;
+          return;
+        case 'config':
+          simulatedWorkMs = Math.max(0, Math.min(1000, message.simulatedWorkMs));
           return;
         case 'grid': {
           const prev = gridQuery;
