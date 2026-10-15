@@ -62,3 +62,40 @@ Events/s rows come from the buffer runs above. The rest come from a separate beh
 | 5 s bucket count vs 1 s      | 8,217 vs 1,661 (≈ 5×)                                                           |
 | Server killed → worker       | still running (D16); totals continued 72,465 → 76,364; 0 missed after reconnect |
 | Disconnect → worker          | terminated (0 workers)                                                          |
+
+## Phase 3 measurements
+
+Same environment as above (headless Chromium, Linux container, dev build), measured 2026-10-15.
+
+### Experiment 15.2 — DOM rendering: naive vs virtualized
+
+| Scenario                                           |                       DOM nodes | Time to build + lay out |
+| -------------------------------------------------- | ------------------------------: | ----------------------: |
+| Naive: 10,000 rows × 5 cells appended              |                          60,000 |                  491 ms |
+| Naive: 100,000 rows × 5 cells appended             |                         600,000 |                5,077 ms |
+| Virtualized grid, 100,000 rows held in the worker  | 21 rows (142 nodes in the grid) |                       — |
+| Virtualized grid after scrolling to middle and end |                         21 rows |                       — |
+
+Whole page: 455 DOM nodes with 100K events held. Jump-scroll to the end of 100K rows: rows filled
+55 ms later (one worker round-trip + render). Worker query time: 1.7 ms for time-descending
+(no sort), 43.7 ms for a value sort of 100K rows.
+
+### Experiment 6.3 / 15.3 — Chart downsampling (raw resolution, ~16.9K points per metric, 6 charts)
+
+| Algorithm | Points per metric | Worker downsample (all metrics) | Main render (all charts) |
+| --------- | ----------------: | ------------------------------: | -----------------------: |
+| None      |           ~16,900 |                    3.3 – 6.4 ms |           16.1 – 28.4 ms |
+| Every Nth |              ~993 |                      0 – 0.1 ms |             5.7 – 7.2 ms |
+| LTTB      |             1,000 |                    0.6 – 1.0 ms |             5.5 – 8.4 ms |
+
+Four samples each. Rendering 17× fewer points cuts chart render time ~3×; LTTB costs < 1 ms in
+the worker. ("None" still spends time building the index array it passes through.)
+
+**Visual quality — error spikes kept** (errors metric is 0/1; ~2% are 1). Generator output,
+~16.7K error events downsampled to 1,000 points, three runs:
+
+| Run | Spikes in input | Every Nth kept | LTTB kept |
+| --: | --------------: | -------------: | --------: |
+|   1 |             319 |        13 (4%) | 230 (72%) |
+|   2 |             339 |       33 (10%) | 240 (71%) |
+|   3 |             325 |        24 (7%) | 228 (70%) |

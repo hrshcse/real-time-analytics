@@ -311,3 +311,33 @@ describe('send', () => {
     expect(latest().sent).toEqual(['{"type":"setRate","rate":10000}']);
   });
 });
+
+describe('chart and grid channels', () => {
+  it('replays the current view to a fresh worker and routes chart data to its own store', () => {
+    conn.setView({
+      rangeMs: 60_000,
+      metrics: ['cpu'],
+      resolution: 'raw',
+      algorithm: 'none',
+      maxPoints: 100,
+    });
+    openWithHello(); // worker created AFTER setView: must still get the view
+    const listener = vi.fn();
+    conn.subscribe(listener);
+    latest().serverSend(batch(0, [event({ value: 7 })]));
+    tick(500);
+    expect(conn.chart.get()?.series.cpu?.y).toEqual([7]);
+  });
+
+  it('answers a grid query with a page in the grid store', () => {
+    openWithHello();
+    latest().serverSend(batch(0, [event(), event()]));
+    tick(100); // frames reach the worker
+    conn.queryGrid(
+      { sort: { key: 'timestamp', dir: 'desc' }, metrics: null, search: '', offset: 0, limit: 10 },
+      true,
+    );
+    tick(50);
+    expect(conn.grid.get()?.total).toBe(2);
+  });
+});

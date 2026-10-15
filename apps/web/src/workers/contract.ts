@@ -1,14 +1,21 @@
 import type { InvalidReason } from '@rta/shared';
-import type { LatestBuckets } from '../processing';
+import type { GridPage, GridQuery, LatestBuckets } from '../processing';
+import type { ChartData, ChartView } from './chart';
+
+export type { ChartData, ChartView, GridPage, GridQuery };
 
 /**
  * Messages between the main thread and the processing worker (WBS 4.1).
  * Both sides import these types, so a typo in `type` is a compile error.
  *
  *  MAIN                                   WORKER
- *   frames { raw: string[] } ──────────▶  parse → seq → validate → aggregate
+ *   frames { raw: string[] } ──────────▶  parse → seq → validate → aggregate + store
  *   reset                    ──────────▶  new connection: seq restarts at 0
+ *   view  { ChartView|null } ──────────▶  which chart series to build (null = none)
+ *   grid  { GridQuery|null } ──────────▶  which grid page to serve (null = grid closed)
  *                            ◀──────────  summary (≤ 4/sec, only when changed)
+ *                            ◀──────────  chart   (≤ 4/sec, only when changed)
+ *                            ◀──────────  grid    (immediately on a query; ≤ 1/sec while live)
  *                            ◀──────────  error (caught exception; worker keeps running)
  */
 
@@ -16,7 +23,10 @@ export type MainToWorker =
   /** Raw batch frames, exactly as received from the socket (D12). */
   | { type: 'frames'; raw: string[] }
   /** Sent on `hello`. Always after flushing buffered frames, so ordering stays correct. */
-  | { type: 'reset' };
+  | { type: 'reset' }
+  | { type: 'view'; view: ChartView | null }
+  /** live = false freezes the grid's contents (paging still works on the frozen result). */
+  | { type: 'grid'; query: GridQuery | null; live: boolean };
 
 export interface ProcessingTime {
   /** Batches processed since the previous summary. */
@@ -47,4 +57,7 @@ export interface WorkerSummary {
 }
 
 export type WorkerToMain =
-  { type: 'summary'; summary: WorkerSummary } | { type: 'error'; message: string };
+  | { type: 'summary'; summary: WorkerSummary }
+  | { type: 'chart'; chart: ChartData }
+  | { type: 'grid'; page: GridPage }
+  | { type: 'error'; message: string };

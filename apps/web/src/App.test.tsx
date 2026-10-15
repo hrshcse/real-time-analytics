@@ -2,6 +2,8 @@ import { act, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import type { Connection, ConnectionSnapshot } from './ws';
+import type { ChartData, GridPage } from './workers/contract';
+import { createStore } from './ws/store';
 
 function fakeConnection(initial: Partial<ConnectionSnapshot> = {}) {
   let snapshot: ConnectionSnapshot = {
@@ -10,6 +12,7 @@ function fakeConnection(initial: Partial<ConnectionSnapshot> = {}) {
     server: null,
     latest: {},
     workerError: null,
+    connectedAt: null,
     stats: {
       eventsPerSec: 0,
       totalEvents: 0,
@@ -18,6 +21,7 @@ function fakeConnection(initial: Partial<ConnectionSnapshot> = {}) {
       lateEvents: 0,
       droppedOnDisconnect: 0,
       processing: null,
+      heapMB: null,
       framesReceived: 0,
       malformedFrames: 0,
       invalidEvents: 0,
@@ -47,6 +51,10 @@ function fakeConnection(initial: Partial<ConnectionSnapshot> = {}) {
       return () => listeners.delete(l);
     },
     getSnapshot: () => snapshot,
+    chart: createStore<ChartData | null>(null),
+    grid: createStore<GridPage | null>(null),
+    setView: vi.fn(),
+    queryGrid: vi.fn(),
   };
   const push = (patch: Partial<ConnectionSnapshot>) => {
     snapshot = { ...snapshot, ...patch };

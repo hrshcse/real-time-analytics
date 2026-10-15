@@ -41,7 +41,7 @@ describe('createProcessor', () => {
       type: 'frames',
       raw: [frame(0, [event(), event({ value: 'NaN' })]), frame(1, [event()])],
     });
-    const s = p.tick()!;
+    const s = p.tick().summary!;
     expect(s).toMatchObject({
       totalEvents: 2,
       batchFrames: 2,
@@ -56,39 +56,39 @@ describe('createProcessor', () => {
   it('counts truncated JSON as malformed without throwing', () => {
     const p = make();
     p.handle({ type: 'frames', raw: ['{"type":"batch","events":[{"id":"tr'] });
-    expect(p.tick()!.malformedFrames).toBe(1);
+    expect(p.tick().summary!.malformedFrames).toBe(1);
   });
 
   it('tracks seq gaps and duplicates; reset restarts seq for a new connection', () => {
     const p = make();
     p.handle({ type: 'frames', raw: [frame(0, []), frame(3, []), frame(3, [])] });
-    expect(p.tick()).toMatchObject({ missedFrames: 2, duplicateFrames: 1 });
+    expect(p.tick().summary).toMatchObject({ missedFrames: 2, duplicateFrames: 1 });
     p.handle({ type: 'reset' });
     p.handle({ type: 'frames', raw: [frame(0, [event()])] });
-    expect(p.tick()).toMatchObject({ missedFrames: 2, duplicateFrames: 1, totalEvents: 1 });
+    expect(p.tick().summary).toMatchObject({ missedFrames: 2, duplicateFrames: 1, totalEvents: 1 });
   });
 
   it('takes serverDropped from the latest batch and clears it on reset', () => {
     const p = make();
     p.handle({ type: 'frames', raw: [frame(0, [], 4)] });
-    expect(p.tick()!.serverDropped).toBe(4);
+    expect(p.tick().summary!.serverDropped).toBe(4);
     p.handle({ type: 'reset' });
-    expect(p.tick()!.serverDropped).toBe(0);
+    expect(p.tick().summary!.serverDropped).toBe(0);
   });
 
   it('returns null from tick() when nothing changed', () => {
     const p = make();
     p.handle({ type: 'frames', raw: [frame(0, [])] });
-    expect(p.tick()).not.toBeNull();
-    expect(p.tick()).toBeNull();
+    expect(p.tick().summary).not.toBeNull();
+    expect(p.tick().summary).toBeNull();
   });
 
   it('publishes the latest closed 1 s bucket once the second has passed', () => {
     const p = make();
     p.handle({ type: 'frames', raw: [frame(0, [event({ value: 10 }), event({ value: 30 })])] });
-    expect(p.tick()!.latest[1000]!.cpu).toBeUndefined(); // second still open
+    expect(p.tick().summary!.latest[1000]!.cpu).toBeUndefined(); // second still open
     clock = T0 + 1000;
-    const s = p.tick()!;
+    const s = p.tick().summary!;
     expect(s.latest[1000]!.cpu).toMatchObject({ start: T0, count: 2, avg: 20, min: 10, max: 30 });
   });
 
@@ -105,7 +105,7 @@ describe('createProcessor', () => {
         ),
       ],
     });
-    expect(p.tick()!.eventsPerSec).toBe(100); // 50 events in 0.5 s
+    expect(p.tick().summary!.eventsPerSec).toBe(100); // 50 events in 0.5 s
   });
 
   it('resets processing time after each summary', () => {
@@ -113,7 +113,7 @@ describe('createProcessor', () => {
     p.handle({ type: 'frames', raw: [frame(0, [])] });
     p.tick();
     p.handle({ type: 'frames', raw: [frame(1, [])] });
-    expect(p.tick()!.processing.batches).toBe(1);
+    expect(p.tick().summary!.processing.batches).toBe(1);
   });
 });
 
@@ -137,5 +137,116 @@ describe('startWorkerRuntime (through the fake worker)', () => {
     vi.advanceTimersByTime(1000); // idle, same clock → no change
     expect(received).toHaveLength(1);
     worker.terminate();
+  });
+});
+
+describe('chart view', () => {
+  it('builds downsampled bucket series once buckets close, and only when they change', () => {
+    const p = make();
+    p.handle({
+      type: 'view',
+      view: {
+        rangeMs: 60_000,
+        metrics: ['cpu'],
+        resolution: 'bucket',
+        algorithm: 'lttb',
+        maxPoints: 3,
+      },
+    });
+    // 10 seconds of data, one bucket per second
+    for (let s = 0; s < 10; s++) {
+      clock = T0 + s * 1000 + 100;
+      p.handle({ type: 'frames', raw: [frame(s, [event({ value: s })])] });
+    }
+    clock = T0 + 10_000;
+    const { chart } = p.tick();
+    expect(chart?.inputPoints).toBe(10);
+    expect(chart?.outputPoints).toBe(3);
+    expect(chart?.series.cpu?.t[0]).toBe(T0);
+    expect(chart?.series.memory).toBeUndefined();
+    expect(p.tick().chart).toBeNull(); // nothing new closed
+  });
+
+  it('raw resolution uses individual events', () => {
+    const p = make();
+    p.handle({
+      type: 'view',
+      view: {
+        rangeMs: 60_000,
+        metrics: ['cpu'],
+        resolution: 'raw',
+        algorithm: 'none',
+        maxPoints: 100,
+      },
+    });
+    p.handle({ type: 'frames', raw: [frame(0, [event({ value: 1 }), event({ value: 2 })])] });
+    const { chart } = p.tick();
+    expect(chart?.series.cpu?.y).toEqual([1, 2]);
+  });
+});
+
+describe('grid', () => {
+  it('answers a query immediately and re-slices without rebuilding on scroll', () => {
+    const p = make();
+    p.handle({
+      type: 'frames',
+      raw: [
+        frame(
+          0,
+          Array.from({ length: 10 }, (_, i) => event({ value: i })),
+        ),
+      ],
+    });
+    p.handle({
+      type: 'grid',
+      live: true,
+      query: {
+        sort: { key: 'value', dir: 'desc' },
+        metrics: null,
+        search: '',
+        offset: 0,
+        limit: 3,
+      },
+    });
+    const page = p.takeGridPage()!;
+    expect(page.total).toBe(10);
+    expect(page.rows.map((r) => r.value)).toEqual([9, 8, 7]);
+    expect(p.takeGridPage()).toBeNull(); // owed once
+
+    p.handle({
+      type: 'grid',
+      live: true,
+      query: {
+        sort: { key: 'value', dir: 'desc' },
+        metrics: null,
+        search: '',
+        offset: 3,
+        limit: 3,
+      },
+    });
+    expect(p.takeGridPage()!.rows.map((r) => r.value)).toEqual([6, 5, 4]);
+  });
+
+  it('refreshes live at most every gridRefreshMs, and not at all when paused', () => {
+    const p = make();
+    const q = {
+      sort: { key: 'timestamp' as const, dir: 'desc' as const },
+      metrics: null,
+      search: '',
+      offset: 0,
+      limit: 5,
+    };
+    p.handle({ type: 'grid', live: true, query: q });
+    p.takeGridPage();
+    p.handle({ type: 'frames', raw: [frame(0, [event()])] });
+    expect(p.tick().grid).toBeNull(); // < 1 s since last build
+    clock += 1000;
+    expect(p.tick().grid?.total).toBe(1);
+
+    p.handle({ type: 'grid', live: false, query: q });
+    p.takeGridPage();
+    p.handle({ type: 'frames', raw: [frame(1, [event()])] });
+    clock += 2000;
+    expect(p.tick().grid).toBeNull();
   });
 });

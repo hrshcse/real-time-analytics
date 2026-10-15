@@ -1,9 +1,14 @@
+import { useState } from 'react';
 import styles from './App.module.css';
-import dash from './components/dashboard.module.css';
+import { ChartPanel } from './components/ChartPanel';
 import { ConnectionBadge } from './components/ConnectionBadge';
+import { DataGrid } from './components/DataGrid';
+import { KpiCards } from './components/KpiCards';
 import { MetricsTable } from './components/MetricsTable';
 import { StatsPanel } from './components/StatsPanel';
 import { StreamControls } from './components/StreamControls';
+import dash from './components/dashboard.module.css';
+import { DEFAULT_VIEW, type ChartView } from './workers/chart';
 import { appConnection, useConnection, type Connection } from './ws';
 
 interface Props {
@@ -12,8 +17,10 @@ interface Props {
 }
 
 export function App({ connection = appConnection }: Props) {
-  const { status, lastClose, server, stats, latest, workerError } = useConnection(connection);
+  const snapshot = useConnection(connection);
+  const { status, lastClose, server, stats, latest, workerError } = snapshot;
   const connected = status === 'connected';
+  const [view, setView] = useState<ChartView>(DEFAULT_VIEW);
 
   return (
     <div className={styles.shell}>
@@ -39,8 +46,14 @@ export function App({ connection = appConnection }: Props) {
             Processing worker error: {workerError}
           </p>
         )}
-        <StatsPanel stats={stats} server={server} />
-        <MetricsTable latest={latest} />
+        <KpiCards snapshot={snapshot} />
+        <ChartPanel connection={connection} view={view} onViewChange={setView} />
+        <DataGrid connection={connection} />
+        <details className={dash.pipeline}>
+          <summary>Pipeline details</summary>
+          <StatsPanel stats={stats} server={server} />
+          <MetricsTable latest={latest} />
+        </details>
       </main>
     </div>
   );

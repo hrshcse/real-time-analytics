@@ -1,0 +1,147 @@
+.panel {
+  margin-top: 8px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segment {
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.segment + .segment {
+  border-left: 1px solid var(--border);
+}
+
+.segment[aria-checked='true'] {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.segment:focus-visible {
+  outline: 2px solid var(--ok);
+  outline-offset: -2px;
+}
+
+.metricToggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.toggle {
+  font-size: 0.875rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.legend {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.swatch {
+  display: inline-block;
+  width: 16px;
+  height: 2px;
+  margin-left: 8px;
+}
+
+.swatchDashed {
+  display: inline-block;
+  width: 16px;
+  border-top: 2px dashed;
+  margin-left: 8px;
+}
+
+.meta {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.pausedTag {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.multiples {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.chartCard {
+  margin: 0;
+  padding: 10px 12px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.chartTitle {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.unit {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+.last {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.canvasBox {
+  position: relative;
+  height: 150px;
+  margin-top: 6px;
+}
+
+@media (max-width: 420px) {
+  .multiples {
+    grid-template-columns: 1fr;
+  }
+}

@@ -115,3 +115,37 @@ An unexpected close (server restart, network drop) keeps the worker, so totals a
 history survive and Phase 5 reconnection can resume into the same pipeline. `hello` sends `reset`
 so `seq` restarts without false gaps. `disconnect()` (user action / unmount) terminates it (WBS 12.2).
 Verified in the browser: worker count 1 after the server died, 0 after Disconnect.
+
+---
+
+## Phase 3
+
+### D17. Small multiples: one chart per metric, avg + p95 — Claude
+
+Metrics have unrelated units (%, ms, KB/s), so one shared y-axis would flatten most lines and a
+dual axis misleads. Each metric gets its own chart and scale. p95 is drawn dashed (colour + dash
+pattern + legend, so identity is never colour alone) and hidden for `errors`, whose 0/1 values make
+p95 meaningless; its bucket average _is_ the error rate and is shown as a percentage. Colours
+(`#3987e5`, `#d95926`) passed the palette validator on the dark surface.
+
+### D18. Downsampling in the worker; LTTB by default, 300 points — Claude
+
+The worker sends ≤ `maxPoints` per metric, so the main thread never touches the full series.
+LTTB is the default because it keeps outliers: on ~16.7K raw error events it kept ~70% of error
+spikes, every-Nth kept 4–10% (see PERFORMANCE.md). Chart.js runs with `animation: false`,
+`parsing: false`, `normalized: true`, and a linear x-axis with our own time formatting (no date
+adapter dependency).
+
+### D19. The grid queries the worker; the main thread renders only visible rows — Claude
+
+Sort/filter/search over 100K events runs in the worker; the main thread asks for a page
+(offset, limit ≈ 75) and renders ~20 rows. Live refresh is capped at 1 Hz because a non-time sort
+of 100K rows costs ~45 ms in the worker; time-descending needs no sort (ring buffer order).
+"Freeze" stops refreshing. Rows are fixed-height (28 px), which keeps index ↔ pixel math trivial;
+variable heights would need measurement and an offset index.
+Events are immutable, so "update existing records" (WBS 9.4) reduces to add-new / evict-oldest.
+
+### D20. Separate external stores for stats, chart and grid — Claude
+
+A chart update re-renders only the charts; a grid page only the grid. One combined snapshot would
+re-render the whole dashboard for each.

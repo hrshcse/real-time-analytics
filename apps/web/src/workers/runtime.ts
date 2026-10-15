@@ -8,32 +8,39 @@ export interface WorkerScopeLike {
 }
 
 export interface WorkerRuntimeOptions extends ProcessorOptions {
-  /** How often to send a summary (only if changed). Matches the UI publish rate. */
+  /** How often to send summaries/chart data (only if changed). Matches the UI publish rate. */
   summaryIntervalMs?: number;
 }
 
 /**
- * Wires a scope's messages to a processor and sends summaries on a timer.
+ * Wires a scope's messages to a processor and sends updates on a timer.
  * Returns a stop function (clears the timer). The real worker never stops; terminate() kills it.
  */
 export function startWorkerRuntime(scope: WorkerScopeLike, options: WorkerRuntimeOptions = {}) {
   const processor = createProcessor(options);
+  const report = (err: unknown) =>
+    scope.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
 
   scope.onmessage = (event) => {
     try {
       processor.handle(event.data);
+      // A grid query is answered immediately: scrolling must not wait for the next tick.
+      const page = processor.takeGridPage();
+      if (page) scope.postMessage({ type: 'grid', page });
     } catch (err) {
-      // Report and keep running: one bad message shouldn't kill the pipeline (WBS 17.2).
-      scope.postMessage({
-        type: 'error',
-        message: err instanceof Error ? err.message : String(err),
-      });
+      report(err); // keep running: one bad message shouldn't kill the pipeline (WBS 17.2)
     }
   };
 
   const timer = setInterval(() => {
-    const summary = processor.tick();
-    if (summary) scope.postMessage({ type: 'summary', summary });
+    try {
+      const { summary, chart, grid } = processor.tick();
+      if (summary) scope.postMessage({ type: 'summary', summary });
+      if (chart) scope.postMessage({ type: 'chart', chart });
+      if (grid) scope.postMessage({ type: 'grid', page: grid });
+    } catch (err) {
+      report(err);
+    }
   }, options.summaryIntervalMs ?? 250);
 
   return () => clearInterval(timer);

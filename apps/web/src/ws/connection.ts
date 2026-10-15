@@ -1,7 +1,16 @@
 import type { ClientMessage, InvalidReason } from '@rta/shared';
 import { createRateMeter, parseServerMessage, type LatestBuckets } from '../processing';
-import type { MainToWorker, WorkerSummary, WorkerToMain } from '../workers/contract';
+import type {
+  ChartData,
+  ChartView,
+  GridPage,
+  GridQuery,
+  MainToWorker,
+  WorkerSummary,
+  WorkerToMain,
+} from '../workers/contract';
 import { createFrameBuffer, type FrameBufferOptions } from './frameBuffer';
+import { createStore, type ReadableStore } from './store';
 
 /**
  * WebSocket connection — plain TypeScript, no React (WBS 3.x, 4.1, 4.5).
@@ -51,6 +60,8 @@ export interface ConnectionStats {
   lastMessageAt: number | null;
   /** Worker time per batch during the last summary window. Null until the first summary. */
   processing: { batches: number; avgMs: number; maxMs: number } | null;
+  /** Main-thread JS heap (Chrome-only `performance.memory`); null where unsupported. */
+  heapMB: number | null;
 }
 
 export interface ConnectionSnapshot {
@@ -61,6 +72,8 @@ export interface ConnectionSnapshot {
   /** Latest closed bucket per metric, keyed by window (ms). */
   latest: Record<number, LatestBuckets>;
   workerError: string | null;
+  /** When the current socket opened (ms since epoch); null when not connected. */
+  connectedAt: number | null;
 }
 
 export interface Connection {
@@ -70,6 +83,14 @@ export interface Connection {
   send(message: ClientMessage): boolean;
   subscribe(listener: () => void): () => void;
   getSnapshot(): ConnectionSnapshot;
+  /** Chart series built by the worker for the current view. */
+  chart: ReadableStore<ChartData | null>;
+  /** The current grid page from the worker. */
+  grid: ReadableStore<GridPage | null>;
+  /** What the chart wants (null = no chart). Remembered across worker restarts. */
+  setView(view: ChartView | null): void;
+  /** What the grid wants (null = grid hidden). Remembered across worker restarts. */
+  queryGrid(query: GridQuery | null, live: boolean): void;
 }
 
 export interface ConnectionOptions {
@@ -115,6 +136,12 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
   let summary: WorkerSummary | null = null;
   let workerError: string | null = null;
   let publishTimer: ReturnType<typeof setInterval> | null = null;
+  let connectedAt: number | null = null;
+  let heapMB: number | null = null;
+  let view: ChartView | null = null;
+  let gridRequest: { query: GridQuery | null; live: boolean } = { query: null, live: true };
+  const chartStore = createStore<ChartData | null>(null);
+  const gridStore = createStore<GridPage | null>(null);
 
   const main = {
     framesReceived: 0,
@@ -155,6 +182,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
       lastClose,
       server,
       workerError,
+      connectedAt,
       latest: s?.latest ?? {},
       stats: {
         eventsPerSec: worker ? (s?.eventsPerSec ?? 0) : 0,
@@ -172,6 +200,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
         droppedOnDisconnect: main.droppedOnDisconnect,
         lastMessageAt: main.lastMessageAt,
         processing,
+        heapMB,
       },
     };
   }
@@ -194,6 +223,11 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
       const p = postsRate.rate;
       if (framesRate.sample(at, main.batchFrames) !== f) dirty = true;
       if (postsRate.sample(at, buffer.flushes) !== p) dirty = true;
+      const mem = readHeapMB();
+      if (mem !== heapMB) {
+        heapMB = mem;
+        dirty = true;
+      }
       if (dirty) publish();
     }, publishIntervalMs);
   }
@@ -218,13 +252,22 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     w.onmessage = (event: MessageEvent<WorkerToMain>) => {
       if (worker !== w) return; // stale (terminated) worker
       const msg = event.data;
-      if (msg.type === 'summary') {
-        if (summary && msg.summary.version === summary.version) return;
-        summary = msg.summary;
-        dirty = true;
-      } else {
-        workerError = msg.message;
-        publish();
+      switch (msg.type) {
+        case 'summary':
+          if (summary && msg.summary.version === summary.version) return;
+          summary = msg.summary;
+          dirty = true;
+          return;
+        case 'chart':
+          chartStore.set(msg.chart);
+          return;
+        case 'grid':
+          gridStore.set(msg.page);
+          return;
+        case 'error':
+          workerError = msg.message;
+          publish();
+          return;
       }
     };
     w.onerror = (event: ErrorEvent) => {
@@ -233,6 +276,9 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
       workerError = event.message || 'Worker failed to start or crashed';
       publish();
     };
+    // A fresh worker knows nothing: replay what the UI currently wants.
+    if (view) w.postMessage({ type: 'view', view } satisfies MainToWorker);
+    if (gridRequest.query) w.postMessage({ type: 'grid', ...gridRequest } satisfies MainToWorker);
   }
 
   function stopWorker() {
@@ -319,6 +365,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     // check it would flip the NEW connection's status to 'disconnected'.
     ws.onopen = () => {
       if (socket !== ws) return;
+      connectedAt = now();
       setStatus('connected');
     };
     ws.onmessage = (event: MessageEvent) => {
@@ -334,6 +381,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
       buffer.flush(); // worker is still alive (D16): nothing received is lost
       lastClose = { code: event.code, reason: event.reason, wasClean: event.wasClean };
       server = null;
+      connectedAt = null;
       status = 'disconnected';
       publish();
     };
@@ -346,6 +394,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     stopWorker();
     stopPublishing();
     server = null;
+    connectedAt = null;
     status = 'disconnected';
     publish();
 
@@ -375,5 +424,21 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
       return () => listeners.delete(listener);
     },
     getSnapshot: () => snapshot,
+    chart: chartStore,
+    grid: gridStore,
+    setView(next) {
+      view = next;
+      post({ type: 'view', view: next });
+    },
+    queryGrid(query, live) {
+      gridRequest = { query, live };
+      post({ type: 'grid', query, live });
+    },
   };
+}
+
+/** Chrome exposes `performance.memory` (non-standard). Other browsers: null. */
+function readHeapMB(): number | null {
+  const mem = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+  return mem ? Math.round(mem.usedJSHeapSize / 1048576) : null;
 }
