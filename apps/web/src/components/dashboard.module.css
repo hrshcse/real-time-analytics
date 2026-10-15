@@ -262,3 +262,44 @@ section + .reasons {
   width: 100%;
   margin-bottom: 8px;
 }
+
+/* ---------- status banner (WBS 17.4) ---------- */
+.statusBanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.statusBanner[data-tone='error'] {
+  border-left-color: var(--bad);
+}
+.statusBanner[data-tone='warn'] {
+  border-left-color: var(--warn);
+}
+.statusBanner[data-tone='info'] {
+  border-left-color: var(--muted);
+}
+
+.bannerIcon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: var(--border);
+}
+
+.bannerText {
+  flex: 1;
+  margin: 0;
+  font-size: 0.875rem;
+}

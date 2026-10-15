@@ -145,3 +145,32 @@
     grid-template-columns: 1fr;
   }
 }
+
+.replay {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.replayStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress {
+  width: 160px;
+  accent-color: var(--warn);
+}
+
+.replayTag {
+  color: var(--warn);
+  font-weight: 500;
+}

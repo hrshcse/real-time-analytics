@@ -15,7 +15,9 @@ import {
 } from '../processing';
 import type { AnalyticsEvent } from '@rta/shared';
 import { buildChart, type ChartData, type ChartView } from './chart';
-import type { MainToWorker, ProcessingTime, WorkerSummary } from './contract';
+import type { MainToWorker, ProcessingTime, StorageSummary, WorkerSummary } from './contract';
+import { createReplay, type Replay, type ReplayState } from './replay';
+import type { StoredBucket } from './storage';
 
 export interface ProcessorOptions {
   aggregator?: AggregatorOptions;
@@ -33,6 +35,8 @@ export interface TickOutput {
   summary: WorkerSummary | null;
   chart: ChartData | null;
   grid: GridPage | null;
+  /** Replay state when it changed this tick (undefined = no change). */
+  replay?: ReplayState | null;
 }
 
 /**
@@ -60,6 +64,10 @@ export function createProcessor(options: ProcessorOptions = {}) {
   let changed = false;
   let simulatedWorkMs = 0;
   let newestEventAt: number | null = null;
+  let storage: StorageSummary = { status: 'starting' };
+  let replay: Replay | null = null;
+  let replayChanged = false;
+  let lastTickAt: number | null = null;
 
   // chart state
   let view: ChartView | null = null;
@@ -148,6 +156,7 @@ export function createProcessor(options: ProcessorOptions = {}) {
       processing,
       latest,
       newestEventAt,
+      storage,
     };
     processing = { batches: 0, totalMs: 0, maxMs: 0 }; // per-summary window
     return summary;
@@ -171,6 +180,9 @@ export function createProcessor(options: ProcessorOptions = {}) {
           view = message.view;
           viewChanged = true;
           return;
+        case 'sessions':
+        case 'replay':
+          return; // async (storage): handled by the runtime
         case 'config':
           simulatedWorkMs = Math.max(0, Math.min(1000, message.simulatedWorkMs));
           return;
@@ -187,6 +199,41 @@ export function createProcessor(options: ProcessorOptions = {}) {
       }
     },
 
+    /** Persistence: closed 1 s buckets to write since the last call. */
+    takeClosedBuckets() {
+      return aggregator.takeClosed();
+    },
+
+    /** Reload recovery: put stored history back into the 1 s series. */
+    restore(buckets: readonly StoredBucket[]) {
+      aggregator.restore(buckets);
+      viewChanged = true; // rebuild the chart with the history
+    },
+
+    setStorage(next: StorageSummary) {
+      storage = next;
+      changed = true;
+    },
+
+    /** Replay: the runtime loads the session (async) and hands the buckets over. */
+    startReplay(sessionId: string, buckets: readonly StoredBucket[], speed: number) {
+      replay = createReplay(sessionId, buckets, speed);
+      replayChanged = true;
+      viewChanged = true;
+    },
+
+    replayCommand(
+      cmd: { action: 'pause' | 'resume' | 'stop' } | { action: 'speed'; speed: number },
+    ) {
+      if (!replay) return;
+      if (cmd.action === 'pause') replay.pause();
+      else if (cmd.action === 'resume') replay.resume();
+      else if (cmd.action === 'speed') replay.setSpeed(cmd.speed);
+      else replay = null;
+      replayChanged = true;
+      viewChanged = true;
+    },
+
     /** A grid page owed right now (after a query message), else null. */
     takeGridPage(): GridPage | null {
       if (!gridPending) return null;
@@ -201,6 +248,9 @@ export function createProcessor(options: ProcessorOptions = {}) {
     tick(): TickOutput {
       const at = now();
       const closed = aggregator.close(at);
+      const elapsed = lastTickAt === null ? 0 : at - lastTickAt;
+      lastTickAt = at;
+      const replayMoved = replay ? replay.advance(elapsed) : false;
       const prevRate = rate.rate;
       const eventsPerSec = rate.sample(at, totalEvents);
 
@@ -214,10 +264,13 @@ export function createProcessor(options: ProcessorOptions = {}) {
       if (view) {
         // Rebuild only when the view's input changed: bucket mode → a bucket closed;
         // raw mode → new events arrived.
-        const inputChanged =
-          view.resolution === 'bucket' ? closed : store.version !== chartStoreVersion;
+        const inputChanged = replay
+          ? replayMoved
+          : view.resolution === 'bucket'
+            ? closed
+            : store.version !== chartStoreVersion;
         if (viewChanged || inputChanged) {
-          chart = buildChart(view, aggregator, store, at, perfNow);
+          chart = buildChart(view, aggregator, store, at, perfNow, replay);
           chartStoreVersion = store.version;
           viewChanged = false;
         }
@@ -234,7 +287,12 @@ export function createProcessor(options: ProcessorOptions = {}) {
         grid = gridPage();
       }
 
-      return { summary, chart, grid };
+      const out: TickOutput = { summary, chart, grid };
+      if (replayChanged || replayMoved) {
+        out.replay = replay ? replay.state : null;
+        replayChanged = false;
+      }
+      return out;
     },
 
     aggregator,

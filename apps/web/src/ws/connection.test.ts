@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeWorker, type FakeWorker } from '../test/fakeWorker';
 import type { MainToWorker, WorkerToMain } from '../workers/contract';
 import { startWorkerRuntime } from '../workers/runtime';
-import { createConnection, type Connection } from './connection';
+import { backoffDelay, createConnection, type Connection } from './connection';
 
 /** Minimal controllable stand-in for the browser WebSocket. */
 class FakeWebSocket {
@@ -125,12 +125,12 @@ describe('status transitions', () => {
     expect(conn.getSnapshot().status).toBe('connected');
   });
 
-  it('server close → disconnected with the close code', () => {
+  it('server close → reconnecting, with the close code', () => {
     conn.connect();
     latest().serverOpen();
     latest().serverClose(1006);
     const snap = conn.getSnapshot();
-    expect(snap.status).toBe('disconnected');
+    expect(snap.status).toBe('reconnecting');
     expect(snap.lastClose).toEqual({ code: 1006, reason: '', wasClean: false });
   });
 
@@ -397,5 +397,144 @@ describe('render batching (WBS 10.4)', () => {
     for (let i = 20; i < 40; i++) latest().serverSend(batch(i, [event()]));
     tick(250);
     expect(listener.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+});
+
+describe('reconnection (WBS 12.1)', () => {
+  function setupRc(maxAttempts = 3) {
+    conn.disconnect();
+    conn = createConnection('ws://test', {
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+      now: () => clock,
+      random: () => 0.5, // no jitter: exact 1 s, 2 s, 4 s …
+      reconnect: { maxAttempts },
+      heartbeatTimeoutMs: 15_000,
+      scheduleFrame: (cb) => setTimeout(cb, 16) as unknown as number,
+      cancelFrame: (id) => clearTimeout(id),
+      createWorker: () => {
+        const w = createFakeWorker<MainToWorker, WorkerToMain>((scope) =>
+          startWorkerRuntime(scope, { now: () => clock, storage: false }),
+        );
+        workers.push(w);
+        return w.asWorker();
+      },
+    });
+  }
+
+  it('retries with exponential backoff: 1 s, 2 s, 4 s', () => {
+    setupRc(5);
+    conn.connect();
+    latest().serverClose(1006); // initial connect fails
+    expect(conn.getSnapshot().reconnect).toMatchObject({ attempt: 1, nextRetryAt: clock + 1000 });
+    const opened = () => FakeWebSocket.instances.length;
+    expect(opened()).toBe(1);
+    tick(1000);
+    expect(opened()).toBe(2);
+    latest().serverClose(1006);
+    expect(conn.getSnapshot().reconnect).toMatchObject({ attempt: 2, nextRetryAt: clock + 2000 });
+    tick(1950);
+    expect(opened()).toBe(2);
+    tick(50);
+    expect(opened()).toBe(3);
+    latest().serverClose(1006);
+    expect(conn.getSnapshot().reconnect?.nextRetryAt).toBe(clock + 4000);
+  });
+
+  it('gives up after maxAttempts and waits for a manual connect', () => {
+    setupRc(2);
+    conn.connect();
+    latest().serverClose(1006);
+    tick(1000);
+    latest().serverClose(1006);
+    tick(2000);
+    latest().serverClose(1006);
+    const snap = conn.getSnapshot();
+    expect(snap).toMatchObject({ status: 'disconnected', retryExhausted: true, reconnect: null });
+    tick(60_000);
+    expect(FakeWebSocket.instances).toHaveLength(3); // no more tries
+    conn.connect(); // manual
+    expect(FakeWebSocket.instances).toHaveLength(4);
+    expect(conn.getSnapshot().retryExhausted).toBe(false);
+  });
+
+  it('a successful open resets the attempt counter', () => {
+    setupRc(5);
+    conn.connect();
+    latest().serverClose(1006);
+    tick(1000);
+    latest().serverOpen();
+    latest().serverClose(1006);
+    expect(conn.getSnapshot().reconnect?.attempt).toBe(1);
+  });
+
+  it('"Retry now" (connect while reconnecting) skips the wait', () => {
+    setupRc(5);
+    conn.connect();
+    latest().serverClose(1006);
+    conn.connect();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(conn.getSnapshot().reconnect).toBeNull();
+  });
+
+  it('does not retry auth refusals (4401)', () => {
+    setupRc(5);
+    conn.connect();
+    latest().serverClose(4401);
+    expect(conn.getSnapshot().status).toBe('disconnected');
+    tick(10_000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('disconnect() cancels a pending retry and leaves no timers', () => {
+    setupRc(5);
+    conn.connect();
+    latest().serverClose(1006);
+    conn.disconnect();
+    vi.advanceTimersByTime(1);
+    expect(vi.getTimerCount()).toBe(0);
+    tick(5000);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+  });
+
+  it('heartbeat timeout: 15 s of silence closes the socket and reconnects', () => {
+    setupRc(5);
+    conn.connect();
+    latest().serverOpen();
+    tick(15_250);
+    expect(conn.getSnapshot()).toMatchObject({ status: 'reconnecting', lastClose: { code: 4000 } });
+    expect(FakeWebSocket.instances[0]!.closeCalls[0]).toEqual({
+      code: 4000,
+      reason: 'Heartbeat timeout',
+    });
+  });
+
+  it('re-applies the rate and stop the user chose after reconnecting', () => {
+    setupRc(5);
+    conn.connect();
+    latest().serverOpen();
+    conn.send({ type: 'setRate', rate: 10_000 });
+    conn.send({ type: 'stop' });
+    latest().serverClose(1006);
+    tick(1000);
+    latest().serverOpen();
+    latest().serverSend({
+      type: 'hello',
+      serverTime: clock,
+      rate: 1000,
+      tickMs: 50,
+      running: true,
+    });
+    expect(latest().sent).toEqual(['{"type":"setRate","rate":10000}', '{"type":"stop"}']);
+  });
+});
+
+describe('backoffDelay', () => {
+  it('doubles, caps at maxMs, and spreads by ±jitter', () => {
+    const o = { baseMs: 1000, maxMs: 30_000, maxAttempts: 10, jitter: 0.2 };
+    expect([0, 1, 2, 3, 4, 5, 6].map((a) => backoffDelay(a, o, () => 0.5))).toEqual([
+      1000, 2000, 4000, 8000, 16_000, 30_000, 30_000,
+    ]);
+    expect(backoffDelay(0, o, () => 0)).toBe(800);
+    expect(backoffDelay(0, o, () => 1)).toBe(1200);
   });
 });

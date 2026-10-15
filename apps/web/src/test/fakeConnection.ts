@@ -1,11 +1,14 @@
 import { vi } from 'vitest';
-import type { ChartData, GridPage } from '../workers/contract';
+import type { ChartData, GridPage, ReplayState, SessionMeta } from '../workers/contract';
 import type { Connection, ConnectionSnapshot } from '../ws';
 import { createStore } from '../ws/store';
 
 export function emptySnapshot(): ConnectionSnapshot {
   return {
     status: 'disconnected',
+    reconnect: null,
+    retryExhausted: false,
+    storage: { status: 'starting' },
     lastClose: null,
     server: null,
     latest: {},
@@ -64,6 +67,11 @@ export function fakeConnection(initial: Partial<ConnectionSnapshot> = {}) {
     grid: createStore<GridPage | null>(null),
     setView: vi.fn(),
     queryGrid: vi.fn(),
+    sessions: createStore<SessionMeta[] | null>(null),
+    requestSessions: vi.fn(),
+    replay: createStore<ReplayState | null>(null),
+    sendReplay: vi.fn(),
+    restartWorker: vi.fn(),
     setPublishMode: vi.fn(),
     setBackpressure: vi.fn(),
     setSimulatedWorkMs: vi.fn(),

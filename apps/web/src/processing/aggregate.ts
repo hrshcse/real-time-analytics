@@ -31,6 +31,11 @@ export interface BucketStats {
 
 export type LatestBuckets = Partial<Record<MetricType, BucketStats>>;
 
+/** A closed 1 s bucket tagged with its metric: the unit persisted to IndexedDB (WBS 11). */
+export interface MetricBucket extends BucketStats {
+  metric: MetricType;
+}
+
 export interface AggregatorOptions {
   /** Window sizes in ms. Must include 1000 and be multiples of 1000. */
   windowsMs?: readonly number[];
@@ -116,6 +121,8 @@ export function createAggregator(options: AggregatorOptions = {}) {
   /** Per larger window: end of the last window bucket built. */
   const lastWindowEnd = new Map<number, number>();
   let lateEvents = 0;
+  /** 1 s buckets closed since the last takeClosed(), for persistence. */
+  let newlyClosed: MetricBucket[] = [];
 
   function push<T>(list: T[], item: T, max: number) {
     list.push(item);
@@ -167,6 +174,7 @@ export function createAggregator(options: AggregatorOptions = {}) {
         let out = series.get(BASE_MS)!.get(metric);
         if (!out) series.get(BASE_MS)!.set(metric, (out = []));
         push(out, stats, retain);
+        newlyClosed.push({ ...stats, metric });
         changed = true;
       }
     }
@@ -229,9 +237,40 @@ export function createAggregator(options: AggregatorOptions = {}) {
     return built;
   }
 
+  /**
+   * Put persisted 1 s buckets back into the 1 s series (reload recovery, WBS 11.2).
+   * Display-only: restored buckets have no raw values, so they don't feed larger windows,
+   * and they never overwrite a live bucket with the same start.
+   */
+  function restore(buckets: readonly MetricBucket[]) {
+    const byMetric = new Map<MetricType, BucketStats[]>();
+    for (const b of buckets) {
+      const { metric, ...stats } = b;
+      let list = byMetric.get(metric);
+      if (!list) byMetric.set(metric, (list = []));
+      list.push(stats);
+    }
+    for (const [metric, restored] of byMetric) {
+      const live = series.get(BASE_MS)!.get(metric) ?? [];
+      const seen = new Set(live.map((b) => b.start));
+      const merged = [...restored.filter((b) => !seen.has(b.start)), ...live].sort(
+        (a, b) => a.start - b.start,
+      );
+      if (merged.length > retain) merged.splice(0, merged.length - retain);
+      series.get(BASE_MS)!.set(metric, merged);
+    }
+  }
+
   return {
     add,
     close,
+    restore,
+    /** Returns (and forgets) the 1 s buckets closed since the last call. */
+    takeClosed(): MetricBucket[] {
+      const out = newlyClosed;
+      newlyClosed = [];
+      return out;
+    },
     /** Most recent closed bucket per metric for a window. */
     latest(windowMs: number): LatestBuckets {
       const out: LatestBuckets = {};

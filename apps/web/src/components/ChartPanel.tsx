@@ -5,6 +5,7 @@ import type { DownsampleAlgorithm } from '../processing';
 import type { ChartView } from '../workers/chart';
 import type { Connection } from '../ws';
 import { MetricChart } from './MetricChart';
+import { ReplayPanel } from './ReplayPanel';
 import { SERIES_COLORS, UNIT } from './units';
 import styles from './chart.module.css';
 import dash from './dashboard.module.css';
@@ -45,6 +46,7 @@ export function ChartPanel({ connection, view, onViewChange }: Props) {
   const [paused, setPaused] = useState(false);
   const [clearedAt, setClearedAt] = useState(0);
   const [renderMs, setRenderMs] = useState<number | null>(null);
+  const [showReplay, setShowReplay] = useState(false);
   const renderTotal = useRef(0);
 
   // Tell the worker what to build; stop building when the panel unmounts.
@@ -143,6 +145,17 @@ export function ChartPanel({ connection, view, onViewChange }: Props) {
           <button type="button" className={dash.button} onClick={() => setClearedAt(Date.now())}>
             Clear
           </button>
+          <button
+            type="button"
+            className={dash.button}
+            aria-expanded={showReplay}
+            onClick={() => {
+              if (showReplay && chart?.replay) connection.sendReplay({ action: 'stop' });
+              setShowReplay((v) => !v);
+            }}
+          >
+            Replay…
+          </button>
         </div>
       </div>
 
@@ -164,7 +177,14 @@ export function ChartPanel({ connection, view, onViewChange }: Props) {
         </span>
       </fieldset>
 
+      {showReplay && <ReplayPanel connection={connection} />}
+
       <p className={styles.meta} aria-live="off">
+        {chart?.replay && (
+          <strong className={styles.replayTag}>
+            Replay ({chart.replay.speed}×) — live stream continues ·{' '}
+          </strong>
+        )}
         {paused && <strong className={styles.pausedTag}>Paused — stream continues </strong>}
         {chart
           ? `${fmt.format(chart.inputPoints)} → ${fmt.format(chart.outputPoints)} points per metric · ` +
@@ -185,8 +205,11 @@ export function ChartPanel({ connection, view, onViewChange }: Props) {
               series={chart?.series[m]}
               paused={paused}
               clearedAt={clearedAt}
-              xMin={(chart?.builtAt ?? 0) - view.rangeMs}
-              xMax={chart?.builtAt ?? 0 /* no chart → no series → no update */}
+              // Replay: the axis spans the session, so the line fills in as it plays.
+              xMin={chart?.replay ? chart.replay.from : (chart?.builtAt ?? 0) - view.rangeMs}
+              xMax={
+                chart?.replay ? chart.replay.to : (chart?.builtAt ?? 0) /* no chart → no update */
+              }
               showP95={view.resolution === 'bucket' && m !== 'errors'}
               format={formatter(m, view.resolution)}
               onRender={onRender}

@@ -43,8 +43,14 @@ Each connection has its own generator, so two tabs can run different rates.
 
 ## Close codes you'll see
 
-| Code | Meaning                                                                                                  |
-| ---- | -------------------------------------------------------------------------------------------------------- |
-| 1000 | Normal close (client called `close()`)                                                                   |
-| 1001 | Server shut down gracefully (Ctrl+C). On Windows a hard kill may show 1006 instead                       |
-| 1006 | Abnormal: no close frame (server crashed / network dropped). Never sent by code — the browser reports it |
+| Code        | Meaning                                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------------- |
+| 1000        | Normal close (client called `close()`)                                                                   |
+| 1001        | Server shut down gracefully (Ctrl+C). On Windows a hard kill may show 1006 instead                       |
+| 1006        | Abnormal: no close frame (server crashed / network dropped). Never sent by code — the browser reports it |
+| 4000        | Client-side: no frame for 15 s (heartbeat timeout). The client closes and reconnects                     |
+| 4401 / 4403 | Reserved for auth refusals (Phase 7). Never retried                                                      |
+
+Reconnection: every close except a user Disconnect and 4401/4403 is retried with backoff
+(1 s, 2 s, 4 s … cap 30 s, ±20% jitter, 10 attempts). On `hello` the client re-sends the rate and
+start/stop the user last chose.

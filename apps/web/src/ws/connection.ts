@@ -6,6 +6,10 @@ import type {
   GridPage,
   GridQuery,
   MainToWorker,
+  ReplayCommand,
+  ReplayState,
+  SessionMeta,
+  StorageSummary,
   WorkerSummary,
   WorkerToMain,
 } from '../workers/contract';
@@ -80,8 +84,21 @@ export interface ConnectionStats {
   dataLagMs: number | null;
 }
 
+export interface ReconnectState {
+  /** 1-based attempt number of the NEXT try. */
+  attempt: number;
+  maxAttempts: number;
+  /** When the next try happens (ms since epoch). */
+  nextRetryAt: number;
+}
+
 export interface ConnectionSnapshot {
   status: ConnectionStatus;
+  /** Set while status is 'reconnecting'. */
+  reconnect: ReconnectState | null;
+  /** True after maxAttempts failed reconnects; only a manual connect() tries again. */
+  retryExhausted: boolean;
+  storage: StorageSummary;
   lastClose: { code: number; reason: string; wasClean: boolean } | null;
   server: ServerState | null;
   stats: ConnectionStats;
@@ -107,6 +124,14 @@ export interface Connection {
   setView(view: ChartView | null): void;
   /** What the grid wants (null = grid hidden). Remembered across worker restarts. */
   queryGrid(query: GridQuery | null, live: boolean): void;
+  /** Stored sessions (after requestSessions()). */
+  sessions: ReadableStore<SessionMeta[] | null>;
+  requestSessions(): void;
+  /** Replay state; null when the chart shows live data. */
+  replay: ReadableStore<ReplayState | null>;
+  sendReplay(command: ReplayCommand): void;
+  /** Recover from a worker error: terminate and start a fresh worker (totals restart). */
+  restartWorker(): void;
   /** Experiment switches (WBS 10, 15.4). */
   setPublishMode(mode: PublishMode): void;
   setBackpressure(enabled: boolean): void;
@@ -133,10 +158,39 @@ export interface ConnectionOptions {
   /** Injectable frame scheduler (default requestAnimationFrame). */
   scheduleFrame?: (cb: () => void) => number;
   cancelFrame?: (id: number) => void;
+  /** Automatic reconnection (WBS 12.1); false disables it. */
+  reconnect?: Partial<ReconnectOptions> | false;
+  /** Treat the socket as dead after this long without any frame (heartbeats every 5 s). */
+  heartbeatTimeoutMs?: number;
+  random?: () => number;
   /** Injectable for tests. */
   WebSocketImpl?: typeof WebSocket;
   createWorker?: () => Worker;
   now?: () => number;
+}
+
+export interface ReconnectOptions {
+  baseMs: number;
+  maxMs: number;
+  maxAttempts: number;
+  /** ±fraction of random spread, so many clients don't retry in lockstep. */
+  jitter: number;
+}
+
+export const DEFAULT_RECONNECT: ReconnectOptions = {
+  baseMs: 1000,
+  maxMs: 30_000,
+  maxAttempts: 10,
+  jitter: 0.2,
+};
+
+/** Close codes that mean "don't retry": the server refused us on purpose (Phase 7 auth). */
+const NO_RETRY_CODES = new Set([4401, 4403]);
+
+/** 1 s, 2 s, 4 s, 8 s … capped, each ±jitter. attempt is 0-based. */
+export function backoffDelay(attempt: number, o: ReconnectOptions, random: () => number): number {
+  const raw = Math.min(o.maxMs, o.baseMs * 2 ** attempt);
+  return Math.round(raw * (1 - o.jitter + random() * 2 * o.jitter));
 }
 
 /** Our server serialises `type` first (JSON.stringify keeps insertion order). If that ever
@@ -172,6 +226,10 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     options.cancelFrame ??
     (hasRaf ? (id: number) => cancelAnimationFrame(id) : (id: number) => clearTimeout(id));
   const perfNow = () => performance.now();
+  const reconnectOpts: ReconnectOptions | null =
+    options.reconnect === false ? null : { ...DEFAULT_RECONNECT, ...options.reconnect };
+  const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 15_000;
+  const random = options.random ?? Math.random;
   const experiments: ExperimentState = {
     publishMode: options.publishMode ?? 'raf',
     backpressure: true,
@@ -193,6 +251,14 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
   let gridRequest: { query: GridQuery | null; live: boolean } = { query: null, live: true };
   const chartStore = createStore<ChartData | null>(null);
   const gridStore = createStore<GridPage | null>(null);
+  const sessionsStore = createStore<SessionMeta[] | null>(null);
+  const replayStore = createStore<ReplayState | null>(null);
+  let attempt = 0; // reconnect attempts since the last successful open
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectState: ReconnectState | null = null;
+  let retryExhausted = false;
+  /** What the user asked the server for, re-applied after a reconnect (D9 follow-up). */
+  const desired: { rate?: number; running?: boolean } = {};
 
   const main = {
     framesReceived: 0,
@@ -242,6 +308,9 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
         : null;
     return {
       status,
+      reconnect: reconnectState,
+      retryExhausted,
+      storage: s?.storage ?? { status: 'starting' },
       lastClose,
       server,
       workerError,
@@ -313,6 +382,17 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
         heapMB = mem;
         dirty = true;
       }
+      // Heartbeat timeout (WBS 12): the server sends something at least every 5 s.
+      if (
+        status === 'connected' &&
+        main.lastMessageAt !== null &&
+        at - main.lastMessageAt > heartbeatTimeoutMs
+      ) {
+        const ws = socket;
+        socket = null;
+        handleClose({ code: 4000, reason: 'Heartbeat timeout', wasClean: false });
+        ws?.close(4000, 'Heartbeat timeout');
+      }
       if (dirty) schedulePublish();
     }, publishIntervalMs);
   }
@@ -362,6 +442,12 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
         case 'grid':
           gridStore.set(msg.page);
           return;
+        case 'sessions':
+          sessionsStore.set(msg.sessions);
+          return;
+        case 'replay':
+          replayStore.set(msg.state);
+          return;
         case 'error':
           workerError = msg.message;
           publish();
@@ -389,6 +475,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     if (!w) return;
     worker = null; // null first, so post() and late messages are ignored
     w.terminate();
+    replayStore.set(null);
   }
 
   // ---- socket messages ----
@@ -413,6 +500,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
 
     switch (msg.type) {
       case 'hello':
+        reapplyDesired(msg.rate, msg.running);
         // Flush BEFORE reset: postMessage is FIFO, so old-connection frames are processed with
         // the old seq numbers before the worker restarts seq at 0. onclose already flushes;
         // this is the backstop if a close is ever missed.
@@ -453,22 +541,62 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     }
   }
 
-  // ---- lifecycle ----
-  function connect() {
-    if (socket) return; // already connecting/connected
-    lastClose = null;
-    startWorker();
-    startPublishing();
-    setStatus('connecting');
+  /** After a reconnect the server starts fresh; put back what the user had chosen. */
+  function reapplyDesired(rate: number, running: boolean) {
+    if (desired.rate !== undefined && desired.rate !== rate)
+      send({ type: 'setRate', rate: desired.rate });
+    if (desired.running === false && running) send({ type: 'stop' });
+    if (desired.running === true && !running) send({ type: 'start' });
+  }
 
+  function clearRetry() {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+    reconnectState = null;
+  }
+
+  /** Every close not caused by disconnect(): flush, then retry with backoff or give up. */
+  function handleClose(event: { code: number; reason: string; wasClean: boolean }) {
+    buffer.flush(); // worker is still alive (D16): nothing received is lost
+    lastClose = { code: event.code, reason: event.reason, wasClean: event.wasClean };
+    server = null;
+    connectedAt = null;
+    if (reconnectOpts && !NO_RETRY_CODES.has(event.code) && attempt < reconnectOpts.maxAttempts) {
+      const delay = backoffDelay(attempt, reconnectOpts, random);
+      attempt++;
+      reconnectState = {
+        attempt,
+        maxAttempts: reconnectOpts.maxAttempts,
+        nextRetryAt: now() + delay,
+      };
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        openSocket();
+      }, delay);
+      status = 'reconnecting';
+    } else {
+      retryExhausted = reconnectOpts !== null && attempt >= reconnectOpts.maxAttempts;
+      reconnectState = null;
+      status = 'disconnected';
+    }
+    publish();
+  }
+
+  function openSocket() {
+    if (socket) return;
     const ws = new WS(url);
     socket = ws;
+    if (status !== 'reconnecting') setStatus('connecting');
     // Every handler checks `socket === ws`. After disconnect() + connect() (React StrictMode
     // does exactly this in dev), the OLD socket's close event still fires later; without the
     // check it would flip the NEW connection's status to 'disconnected'.
     ws.onopen = () => {
       if (socket !== ws) return;
+      attempt = 0;
+      retryExhausted = false;
+      reconnectState = null;
       connectedAt = now();
+      main.lastMessageAt = now(); // heartbeat clock starts now
       setStatus('connected');
     };
     ws.onmessage = (event: MessageEvent) => {
@@ -484,18 +612,29 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     ws.onclose = (event: CloseEvent) => {
       if (socket !== ws) return;
       socket = null;
-      buffer.flush(); // worker is still alive (D16): nothing received is lost
-      lastClose = { code: event.code, reason: event.reason, wasClean: event.wasClean };
-      server = null;
-      connectedAt = null;
-      status = 'disconnected';
-      publish();
+      handleClose(event);
     };
   }
 
+  /** User intent: connect now (also "Retry now" while reconnecting, and after giving up). */
+  function connect() {
+    clearRetry();
+    attempt = 0;
+    retryExhausted = false;
+    if (socket) return; // already connecting/connected
+    lastClose = null;
+    startWorker();
+    startPublishing();
+    setStatus('connecting'); // a manual connect is never 'reconnecting'
+    openSocket();
+  }
+
+  /** User intent: stop everything (WBS 12.2 cleanup: socket, worker, timers, listeners). */
   function disconnect() {
     const ws = socket;
     socket = null; // detach first, so this socket's late events are ignored
+    clearRetry();
+    attempt = 0;
     main.droppedOnDisconnect += buffer.clear(); // D13: the worker is about to be terminated
     stopWorker();
     stopPublishing();
@@ -517,6 +656,9 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     // Drop rather than queue (D9): a queued "setRate" replayed after a reconnect could apply a
     // stale command to a fresh server session.
     if (!socket || socket.readyState !== WS.OPEN) return false;
+    if (message.type === 'setRate') desired.rate = message.rate;
+    if (message.type === 'start') desired.running = true;
+    if (message.type === 'stop') desired.running = false;
     socket.send(JSON.stringify(message));
     return true;
   }
@@ -539,6 +681,19 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
     queryGrid(query, live) {
       gridRequest = { query, live };
       post({ type: 'grid', query, live });
+    },
+    sessions: sessionsStore,
+    requestSessions() {
+      post({ type: 'sessions' });
+    },
+    replay: replayStore,
+    sendReplay(command) {
+      post({ type: 'replay', ...command });
+    },
+    restartWorker() {
+      stopWorker();
+      startWorker();
+      publish();
     },
     setPublishMode(mode) {
       experiments.publishMode = mode;

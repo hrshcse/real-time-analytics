@@ -40,7 +40,12 @@ export function KpiCards({ snapshot }: { snapshot: ConnectionSnapshot }) {
     },
     {
       label: 'Connection',
-      value: status === 'connected' ? 'Live' : status === 'disconnected' ? 'Offline' : 'Connecting',
+      value: {
+        connected: 'Live',
+        disconnected: 'Offline',
+        connecting: 'Connecting',
+        reconnecting: 'Reconnecting',
+      }[status],
       hint: connectedAt
         ? `since ${time.format(connectedAt)}`
         : snapshot.lastClose

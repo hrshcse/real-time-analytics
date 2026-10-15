@@ -160,3 +160,42 @@ describe('createAggregator — larger windows', () => {
     expect(() => createAggregator({ windowsMs: [1000, 1500] })).toThrow();
   });
 });
+
+describe('persistence hooks', () => {
+  it('takeClosed returns each closed 1 s bucket once, tagged with its metric', () => {
+    const agg = createAggregator({ graceMs: 0, windowsMs: [1000] });
+    agg.add([ev(10, 1, 'cpu'), ev(20, 2, 'memory')]);
+    agg.close(1000);
+    const closed = agg.takeClosed();
+    expect(closed.map((b) => [b.metric, b.start, b.count])).toEqual([
+      ['cpu', 0, 1],
+      ['memory', 0, 1],
+    ]);
+    expect(agg.takeClosed()).toEqual([]);
+  });
+
+  it('restore merges history before live buckets without duplicating starts', () => {
+    const agg = createAggregator({ graceMs: 0, windowsMs: [1000] });
+    agg.add([ev(5000, 9)]);
+    agg.close(6000);
+    const old = {
+      start: 1000,
+      windowMs: 1000,
+      count: 1,
+      sum: 3,
+      avg: 3,
+      min: 3,
+      max: 3,
+      p95: 3,
+      p99: 3,
+    };
+    agg.restore([
+      { ...old, metric: 'cpu' },
+      { ...old, start: 5000, avg: 999, metric: 'cpu' }, // same start as a live bucket: live wins
+    ]);
+    expect(agg.series('cpu', 1000).map((b) => [b.start, b.avg])).toEqual([
+      [1000, 3],
+      [5000, 9],
+    ]);
+  });
+});

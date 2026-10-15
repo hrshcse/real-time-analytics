@@ -1,7 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2022", "WebWorker"],
+    "lib": ["ES2023", "WebWorker"],
     "types": []
   },
   // Only worker entry files. Anything they import (src/processing, @rta/shared) is checked

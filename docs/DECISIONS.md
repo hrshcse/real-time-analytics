@@ -183,3 +183,49 @@ times come from `<Profiler>` writing into plain counters (no setState), drained 
 
 `simulatedWorkMs` busy-waits per frame inside the worker, making "producer faster than consumer"
 (WBS 10.1) reproducible on any machine without changing the server.
+
+---
+
+## Phase 5
+
+### D25. IndexedDB stores 1 s buckets, written from the worker; UI prefs use localStorage — Claude
+
+Raw events (10K+/s) would make IndexedDB the bottleneck; closed 1 s buckets are 6 records/s
+(measured: 72 records after 12 s) and are exactly what charts, reload recovery and replay need.
+Writes happen in the worker (IndexedDB is available there), one transaction per second.
+Chart preferences (range, metrics, downsampling) go to localStorage: a few hundred bytes, needed
+synchronously at startup, per browser. Every storage access is wrapped: blocked or full storage
+degrades features, it never breaks the live stream.
+
+### D26. Retention: 30 minutes, pruned at start and every minute; quota → prune to 15 min and retry once — Claude
+
+`QuotaExceededError` triggers one aggressive prune (half the retention) and a single retry. A
+second failure marks storage as `error`, stops writing, and the banner says history is off while
+live data continues (WBS 17.3 partial failure). Records are shape-checked on read; corrupt ones are
+skipped and counted.
+
+### D27. Reload recovery restores the last 15 minutes into the 1 s series only — Claude
+
+Restored buckets carry stats but not raw values, so they can't feed exact 5 s / 1 min percentiles
+(D15). They're display-only history; live buckets win on the same timestamp.
+
+### D28. Replay runs in the worker on a virtual clock — Claude
+
+The worker loads one session's buckets and advances `at` by real elapsed time × speed
+(1/2/5/10/30×). While replaying the chart source switches; the live stream, KPIs and grid keep
+running. Replay is bucket-resolution only (raw events aren't stored).
+
+### D29. Reconnect: 1 s × 2ⁿ, cap 30 s, ±20% jitter, 10 attempts; heartbeat timeout 15 s — Claude
+
+Jitter stops a fleet of clients reconnecting in lockstep after a server restart. The attempt
+counter resets on a successful open. After 10 failures the client stops and shows "Reconnect".
+Close codes 4401/4403 (auth refusals, Phase 7) are never retried. The server sends a heartbeat
+every 5 s, so 15 s of silence means the connection is dead even if TCP hasn't noticed; the client
+closes with 4000 and reconnects.
+
+### D30. After reconnecting, re-apply what the user chose (closes the D9 follow-up) — Claude
+
+`send()` records the last requested rate and start/stop. On `hello` from a new server session the
+client re-sends only what differs. Commands are not queued while disconnected (D9); intent is.
+Verified in the browser: server killed at 10K/s → reconnected automatically → server log shows
+`setRate 10000` from the new connection.

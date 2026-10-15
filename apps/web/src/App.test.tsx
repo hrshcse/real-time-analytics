@@ -28,7 +28,7 @@ describe('App', () => {
         },
       }),
     );
-    expect(screen.getByRole('alert')).toHaveTextContent('boom');
+    expect(screen.getByRole('alert')).toHaveTextContent('Processing stopped: boom');
     const cpuRow = screen.getByRole('row', { name: /cpu/ });
     expect(cpuRow).toHaveTextContent('3');
     expect(cpuRow).toHaveTextContent('20');

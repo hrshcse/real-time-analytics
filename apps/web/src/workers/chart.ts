@@ -2,9 +2,11 @@ import { METRICS, type MetricType } from '@rta/shared';
 import {
   downsample,
   type Aggregator,
+  type BucketStats,
   type DownsampleAlgorithm,
   type EventStore,
 } from '../processing';
+import type { ReplayState } from './replay';
 
 /**
  * Builds chart series in the worker (WBS 6–7), so the main thread only receives
@@ -42,8 +44,10 @@ export interface ChartData {
   outputPoints: number;
   /** Worker time spent downsampling, all metrics. */
   downsampleMs: number;
-  /** When the data was built (ms since epoch). */
+  /** When the data was built (ms since epoch); the replay clock while replaying. */
   builtAt: number;
+  /** Set while the chart shows a replayed session instead of live data. */
+  replay: ReplayState | null;
 }
 
 export const DEFAULT_VIEW: ChartView = {
@@ -54,13 +58,24 @@ export const DEFAULT_VIEW: ChartView = {
   maxPoints: 300,
 };
 
+export interface ReplaySource {
+  seriesUpTo(metric: MetricType): BucketStats[];
+  readonly state: ReplayState;
+}
+
 export function buildChart(
   view: ChartView,
   aggregator: Aggregator,
   store: EventStore,
   now: number,
   perfNow: () => number,
+  replay: ReplaySource | null = null,
 ): ChartData {
+  // While replaying, time is the replay clock and the source is the stored session (buckets only).
+  if (replay) {
+    now = replay.state.at;
+    view = { ...view, resolution: 'bucket' };
+  }
   const from = now - view.rangeMs;
   const series: ChartData['series'] = {};
   let inputPoints = 0;
@@ -71,7 +86,8 @@ export function buildChart(
   if (view.resolution === 'bucket') {
     for (const metric of METRICS) {
       if (!wanted.has(metric)) continue;
-      const buckets = aggregator.series(metric, 1000).filter((b) => b.start >= from);
+      const source = replay ? replay.seriesUpTo(metric) : aggregator.series(metric, 1000);
+      const buckets = source.filter((b) => b.start >= from);
       const t = buckets.map((b) => b.start);
       const y = buckets.map((b) => b.avg);
       const t0 = perfNow();
@@ -109,5 +125,13 @@ export function buildChart(
     }
   }
 
-  return { view, series, inputPoints, outputPoints, downsampleMs, builtAt: now };
+  return {
+    view,
+    series,
+    inputPoints,
+    outputPoints,
+    downsampleMs,
+    builtAt: now,
+    replay: replay ? replay.state : null,
+  };
 }

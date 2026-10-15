@@ -1,8 +1,17 @@
 import type { InvalidReason } from '@rta/shared';
 import type { GridPage, GridQuery, LatestBuckets } from '../processing';
 import type { ChartData, ChartView } from './chart';
+import type { ReplayState } from './replay';
+import type { SessionMeta, StorageState } from './storage';
 
-export type { ChartData, ChartView, GridPage, GridQuery };
+export type { ChartData, ChartView, GridPage, GridQuery, ReplayState, SessionMeta, StorageState };
+
+export type ReplayCommand =
+  | { action: 'start'; sessionId: string; speed: number }
+  | { action: 'pause' }
+  | { action: 'resume' }
+  | { action: 'stop' }
+  | { action: 'speed'; speed: number };
 
 /**
  * Messages between the main thread and the processing worker (WBS 4.1).
@@ -29,7 +38,10 @@ export type MainToWorker =
   /** live = false freezes the grid's contents (paging still works on the frozen result). */
   | { type: 'grid'; query: GridQuery | null; live: boolean }
   /** Experiments (WBS 10.1): burn this many ms per frame to simulate a slow consumer. */
-  | { type: 'config'; simulatedWorkMs: number };
+  | { type: 'config'; simulatedWorkMs: number }
+  /** List stored sessions (answered with a `sessions` message). */
+  | { type: 'sessions' }
+  | ({ type: 'replay' } & ReplayCommand);
 
 export interface ProcessingTime {
   /** Batches processed since the previous summary. */
@@ -38,6 +50,9 @@ export interface ProcessingTime {
   totalMs: number;
   maxMs: number;
 }
+
+export type StorageSummary =
+  { status: 'starting' } | (StorageState & { restoredBuckets: number; corruptRecords: number });
 
 export interface WorkerSummary {
   /** Increments whenever content changes; the main thread ignores repeats. */
@@ -59,6 +74,8 @@ export interface WorkerSummary {
   latest: Record<number, LatestBuckets>;
   /** Timestamp of the newest event processed. now − this = how stale the dashboard is. */
   newestEventAt: number | null;
+  /** IndexedDB persistence status (WBS 11, 17.3). */
+  storage: StorageSummary;
 }
 
 export type WorkerToMain =
@@ -67,4 +84,7 @@ export type WorkerToMain =
   | { type: 'grid'; page: GridPage }
   /** Sent after every `frames` message: how many frames were consumed (backpressure). */
   | { type: 'ack'; frames: number }
+  | { type: 'sessions'; sessions: SessionMeta[] }
+  /** Replay status after every command, and as the replay clock moves; null = not replaying. */
+  | { type: 'replay'; state: ReplayState | null }
   | { type: 'error'; message: string };
