@@ -52,6 +52,7 @@ export function emptySnapshot(): ConnectionSnapshot {
 export function fakeConnection(initial: Partial<ConnectionSnapshot> = {}) {
   let snapshot: ConnectionSnapshot = { ...emptySnapshot(), ...initial };
   const listeners = new Set<() => void>();
+  const snapshotListeners = () => listeners.size;
   const connection = {
     connect: vi.fn(),
     disconnect: vi.fn(),
@@ -81,5 +82,5 @@ export function fakeConnection(initial: Partial<ConnectionSnapshot> = {}) {
     snapshot = { ...snapshot, ...patch };
     listeners.forEach((l) => l());
   };
-  return { connection, push };
+  return { connection, push, snapshotListeners };
 }

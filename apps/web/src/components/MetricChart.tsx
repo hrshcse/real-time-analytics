@@ -16,6 +16,14 @@ import { SERIES_COLORS } from './units';
 // Tree-shaken registration: only what a line chart on a linear axis needs.
 Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip);
 
+// Dev diagnostics (WBS 16): live Chart.js instances. Must return to the number of visible charts
+// after toggling metrics; a growing count means a chart wasn't destroyed.
+if (import.meta.env.DEV) {
+  (globalThis as { __rtaDiag?: Record<string, () => number> }).__rtaDiag = {
+    charts: () => Object.keys(Chart.instances).length,
+  };
+}
+
 const GRID = 'rgba(139, 147, 167, 0.15)';
 const TICK = '#8b93a7';
 

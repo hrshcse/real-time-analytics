@@ -229,3 +229,24 @@ closes with 4000 and reconnects.
 client re-sends only what differs. Commands are not queued while disconnected (D9); intent is.
 Verified in the browser: server killed at 10K/s → reconnected automatically → server log shows
 `setRate 10000` from the new connection.
+
+---
+
+## Phase 6
+
+### D31. A dev-only Leak Lab instead of leaving deliberate leaks in the app — Claude
+
+The three WBS leaks live in `src/lab/` behind `import.meta.env.DEV` and a lazy import, so they're
+reproducible on demand and absent from production bundles (checked: no lab code in `dist/`).
+Each leak ships with its fix, switchable in place, which makes before/after measurement trivial.
+
+### D32. Measure retained memory with backing-store size, not just JS heap — Claude
+
+Measured: a 100 MB leak moved the JS heap by 0.6 MB because typed-array data lives in
+ArrayBuffer backing stores. Memory checks in this project use `Runtime.getHeapUsage`'s
+`backingStorageSize` alongside `usedSize`, plus heap snapshots for retainer paths (docs/MEMORY.md).
+
+### D33. `listenerCount` on stores — Claude
+
+A cheap leak detector: after unmounting everything, every store must report 0 listeners. Used by
+the app-level test and shown live in the Leak Lab.

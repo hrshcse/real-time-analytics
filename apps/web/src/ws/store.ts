@@ -5,6 +5,8 @@
 export interface ReadableStore<T> {
   get(): T;
   subscribe(listener: () => void): () => void;
+  /** Live subscriptions: a number that only grows across mount/unmount cycles is a leak (WBS 16). */
+  readonly listenerCount: number;
 }
 
 export function createStore<T>(initial: T) {
@@ -22,6 +24,9 @@ export function createStore<T>(initial: T) {
       return () => {
         listeners.delete(listener);
       };
+    },
+    get listenerCount() {
+      return listeners.size;
     },
   };
 }

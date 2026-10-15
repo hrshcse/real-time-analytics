@@ -1,4 +1,4 @@
-import { Profiler, useEffect, useState } from 'react';
+import { lazy, Profiler, Suspense, useEffect, useState } from 'react';
 import styles from './App.module.css';
 import { ChartPanel } from './components/ChartPanel';
 import { ConnectionBadge } from './components/ConnectionBadge';
@@ -14,6 +14,9 @@ import { onRenderProfile } from './perf/renderStats';
 import { loadChartView, saveChartView } from './prefs';
 import type { ChartView } from './workers/chart';
 import { appConnection, useConnection, type Connection } from './ws';
+
+// Dev-only: the import() sits behind import.meta.env.DEV, so production builds drop it entirely.
+const LeakLab = import.meta.env.DEV ? lazy(() => import('./lab/LeakLab')) : null;
 
 interface Props {
   /** Injectable so tests can pass a fake connection. */
@@ -57,6 +60,11 @@ export function App({ connection = appConnection }: Props) {
           <DataGrid connection={connection} />
         </Profiler>
         <PerfPanel connection={connection} stats={stats} />
+        {LeakLab && (
+          <Suspense fallback={null}>
+            <LeakLab connection={connection} stats={stats} />
+          </Suspense>
+        )}
         <details className={dash.pipeline}>
           <summary>Pipeline details</summary>
           <StatsPanel stats={stats} server={server} />

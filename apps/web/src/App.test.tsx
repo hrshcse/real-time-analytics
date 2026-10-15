@@ -73,3 +73,18 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled();
   });
 });
+
+describe('App memory hygiene (WBS 16.3)', () => {
+  it('leaves no subscriptions behind after 20 mount/unmount cycles', () => {
+    const { connection, snapshotListeners } = fakeConnection();
+    for (let i = 0; i < 20; i++) {
+      const { unmount } = render(<App connection={connection} />);
+      unmount();
+    }
+    expect(snapshotListeners()).toBe(0);
+    expect(connection.chart.listenerCount).toBe(0);
+    expect(connection.grid.listenerCount).toBe(0);
+    expect(connection.replay.listenerCount).toBe(0);
+    expect(connection.disconnect).toHaveBeenCalledTimes(20);
+  });
+});
