@@ -98,7 +98,7 @@ export default function LeakLab({
         >
           <dt>Chart store listeners</dt>
           <dd>{fmt.format(connection.chart.listenerCount)}</dd>
-          <p className={styles.hint}>should stay at the number of live subscribers</p>
+          <dd className={styles.hint}>should stay at the number of live subscribers</dd>
         </div>
         <div className={styles.card} data-tone={leakedNodeCount() > 0 ? 'warn' : undefined}>
           <dt>Pinned detached subtrees</dt>
@@ -107,7 +107,7 @@ export default function LeakLab({
         <div className={styles.card}>
           <dt>Main heap</dt>
           <dd>{stats.heapMB === null ? 'n/a' : `${fmt.format(stats.heapMB)} MB`}</dd>
-          <p className={styles.hint}>force GC in DevTools before reading</p>
+          <dd className={styles.hint}>force GC in DevTools before reading</dd>
         </div>
       </dl>
       {mounted && <LeakSubject kind={kind} leaky={leaky} store={connection.chart} />}

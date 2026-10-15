@@ -67,7 +67,7 @@ export function KpiCards({ snapshot }: { snapshot: ConnectionSnapshot }) {
           <div key={c.label} className={styles.card} data-tone={c.warn ? 'warn' : undefined}>
             <dt>{c.label}</dt>
             <dd>{c.value}</dd>
-            <p className={styles.hint}>{c.hint}</p>
+            <dd className={styles.hint}>{c.hint}</dd>
           </div>
         ))}
       </dl>

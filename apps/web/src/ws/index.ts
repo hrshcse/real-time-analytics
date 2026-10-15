@@ -1,9 +1,10 @@
-import { BUFFER_MAX_WAIT_MS, WS_URL } from '../config';
+import { BUFFER_MAX_WAIT_MS, WS_PROTOCOLS, WS_URL } from '../config';
 import { createConnection } from './connection';
 
 /** The app-wide connection. Components receive it as a prop so tests can pass a fake. */
 export const appConnection = createConnection(WS_URL, {
   buffer: { maxWaitMs: BUFFER_MAX_WAIT_MS },
+  protocols: WS_PROTOCOLS,
 });
 
 export * from './connection';

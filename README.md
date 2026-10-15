@@ -1,7 +1,7 @@
 # Real-Time Analytics Dashboard
 
 High-volume streaming dashboard: WebSocket → Web Worker → aggregation/downsampling → React.
-Plan: [`docs/WBS.md`](docs/WBS.md) · Wire protocol: [`docs/PROTOCOL.md`](docs/PROTOCOL.md) · Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md) · Measurements: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) · Tasks: [`docs/tasks/`](docs/tasks)
+Plan: [`docs/WBS.md`](docs/WBS.md) · Protocol: [`docs/PROTOCOL.md`](docs/PROTOCOL.md) · Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md) · Measurements: [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) · Memory: [`docs/MEMORY.md`](docs/MEMORY.md) · Security: [`docs/SECURITY.md`](docs/SECURITY.md) · Accessibility: [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md)
 
 ## Stack (versions as scaffolded, Oct 2026)
 
@@ -40,15 +40,16 @@ Optional config: copy `apps/server/.env.example` → `apps/server/.env`, and
 
 ## Scripts (from the repo root)
 
-| Command                          | What it does              |
-| -------------------------------- | ------------------------- |
-| `npm run dev`                    | Server + web together     |
-| `npm run dev:server` / `dev:web` | One side only             |
-| `npm run lint`                   | ESLint across the repo    |
-| `npm run typecheck`              | `tsc` in every workspace  |
-| `npm test`                       | Vitest in every workspace |
-| `npm run build`                  | Production builds         |
-| `npm run format`                 | Prettier write            |
+| Command                          | What it does                                                                                                     |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`                    | Server + web together                                                                                            |
+| `npm run dev:server` / `dev:web` | One side only                                                                                                    |
+| `npm run lint`                   | ESLint across the repo                                                                                           |
+| `npm run typecheck`              | `tsc` in every workspace                                                                                         |
+| `npm test`                       | Vitest in every workspace                                                                                        |
+| `npm run test:e2e`               | Playwright E2E + axe accessibility (starts server and web itself). First time: `npx playwright install chromium` |
+| `npm run build`                  | Production builds                                                                                                |
+| `npm run format`                 | Prettier write                                                                                                   |
 
 ## Testing the stream by hand
 

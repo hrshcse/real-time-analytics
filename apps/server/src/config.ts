@@ -19,6 +19,15 @@ export const config = {
   maxBufferedBytes: num('MAX_BUFFERED_BYTES', 8 * 1024 * 1024, 1024, 1024 * 1024 * 1024),
   badEventPct: num('BAD_EVENT_PCT', 0, 0, 100),
   badFramePct: num('BAD_FRAME_PCT', 0, 0, 100),
+  /**
+   * Auth PLACEHOLDER (WBS 20): if set, clients must offer the WebSocket subprotocol
+   * `token.<AUTH_TOKEN>`; otherwise they're closed with 4401. Not production auth (see SECURITY.md).
+   */
+  authToken: process.env.AUTH_TOKEN || null,
+  /** Control messages allowed per connection per second (token bucket). */
+  controlRatePerSec: num('CONTROL_RATE_PER_SEC', 10, 1, 1000),
+  /** Simultaneous connections allowed from one IP address. */
+  maxConnectionsPerIp: num('MAX_CONNECTIONS_PER_IP', 20, 1, 10_000),
   /** Browser origins allowed to connect. "*" allows any origin (dev only). */
   allowedOrigins: (process.env.ALLOWED_ORIGINS || 'http://localhost:5173')
     .split(',')

@@ -27,8 +27,28 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    // Security (WBS 20): no raw HTML injection anywhere. React escapes everything else.
+    files: ['apps/web/**/*.{ts,tsx}'],
     rules: {
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+          message: 'Raw HTML is not allowed (XSS). Render text, or sanitise and document why.',
+        },
+        {
+          selector: 'MemberExpression[property.name=/^(innerHTML|outerHTML)$/]',
+          message: 'innerHTML/outerHTML is not allowed (XSS). Use textContent or React.',
+        },
+      ],
+    },
+  },
+  {
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
     },
   },
   prettier,

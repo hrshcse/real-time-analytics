@@ -250,3 +250,33 @@ ArrayBuffer backing stores. Memory checks in this project use `Runtime.getHeapUs
 
 A cheap leak detector: after unmounting everything, every store must report 0 listeners. Used by
 the app-level test and shown live in the Leak Lab.
+
+---
+
+## Phase 7
+
+### D34. Auth placeholder via WebSocket subprotocol, refusals close with 4401 — Claude
+
+Browsers can't set `Authorization` on a WebSocket, so the token rides in `Sec-WebSocket-Protocol`
+(`token.<value>`), checked after the handshake so the client gets a meaningful close code (4401)
+instead of a generic 1006. The client never retries 4401. Clearly a placeholder: the token ships in
+the bundle; SECURITY.md describes the production design (single-use ticket).
+
+### D35. Token-bucket rate limiting per connection, plus a per-IP connection cap — Claude
+
+10 control messages/s with a burst of 10 is far above what a human clicking produces and stops a
+script from spamming `setRate`. Rejections get an `error` reply; 5 s worth of rejections closes the
+socket with 1008 (policy violation). The per-IP cap (20) answers 429 at the handshake.
+
+### D36. CSP injected at build time only — Claude
+
+Vite's dev server needs inline scripts for React Fast Refresh, so a strict CSP would break `npm run
+dev`. A small Vite plugin adds the meta tag to production builds; verified the built app runs under
+it (worker, WebSocket, Chart.js, no violations). Hosting should also send it as a header.
+
+### D37. E2E tests run against the real server; network faults via `page.routeWebSocket` — Claude
+
+No mocked backend: the suite starts the actual WebSocket server and Vite. Drops and auth refusals
+are injected with Playwright's WebSocket routing (forward to the real server, then close with a
+chosen code). Two tests had to account for React StrictMode's extra dev-only socket: "drop the
+connection that's live", not "the first one".

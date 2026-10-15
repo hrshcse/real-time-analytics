@@ -27,6 +27,14 @@ export function StatusBanner({
       </Banner>
     );
   }
+  if (status === 'disconnected' && lastClose?.code === 4401) {
+    return (
+      <Banner tone="error" action={{ label: 'Try again', onClick: connection.connect }}>
+        The server refused the connection (4401 Unauthorized). Check that VITE_WS_TOKEN matches the
+        server’s AUTH_TOKEN.
+      </Banner>
+    );
+  }
   if (workerError) {
     return (
       <Banner tone="error" action={{ label: 'Restart worker', onClick: connection.restartWorker }}>

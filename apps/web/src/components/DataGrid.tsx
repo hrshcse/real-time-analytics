@@ -227,6 +227,7 @@ export function DataGrid({ connection }: Props) {
             className={dash.select}
             placeholder="Search id, source…"
             aria-label="Search events"
+            maxLength={100}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />

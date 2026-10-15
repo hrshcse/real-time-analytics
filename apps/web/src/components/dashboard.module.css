@@ -158,7 +158,8 @@ section + .reasons {
   margin-top: 12px;
 }
 
-.hint {
+/* A second <dd> under the same <dt> (valid <dl> markup), styled small and muted. */
+.card .hint {
   margin: 4px 0 0;
   font-size: 0.75rem;
   color: var(--muted);

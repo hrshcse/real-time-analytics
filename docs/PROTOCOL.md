@@ -43,14 +43,26 @@ Each connection has its own generator, so two tabs can run different rates.
 
 ## Close codes you'll see
 
-| Code        | Meaning                                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------------------- |
-| 1000        | Normal close (client called `close()`)                                                                   |
-| 1001        | Server shut down gracefully (Ctrl+C). On Windows a hard kill may show 1006 instead                       |
-| 1006        | Abnormal: no close frame (server crashed / network dropped). Never sent by code — the browser reports it |
-| 4000        | Client-side: no frame for 15 s (heartbeat timeout). The client closes and reconnects                     |
-| 4401 / 4403 | Reserved for auth refusals (Phase 7). Never retried                                                      |
+| Code | Meaning                                                                                                  |
+| ---- | -------------------------------------------------------------------------------------------------------- |
+| 1000 | Normal close (client called `close()`)                                                                   |
+| 1001 | Server shut down gracefully (Ctrl+C). On Windows a hard kill may show 1006 instead                       |
+| 1006 | Abnormal: no close frame (server crashed / network dropped). Never sent by code — the browser reports it |
+| 1008 | Policy violation: too many control messages (rate limit, see SECURITY.md)                                |
+| 4000 | Client-side: no frame for 15 s (heartbeat timeout). The client closes and reconnects                     |
+| 4401 | Unauthorized: missing/wrong token (auth placeholder). Never retried                                      |
+| 4403 | Reserved for "authenticated but not allowed". Never retried                                              |
 
-Reconnection: every close except a user Disconnect and 4401/4403 is retried with backoff
+Handshake refusals (HTTP, seen by the browser as a failed connect / 1006): **403** origin not
+allowed, **429** too many connections from this IP.
+
+## Subprotocols
+
+The client offers `rta.v1` (and `token.<VITE_WS_TOKEN>` when set). The server always selects
+`rta.v1` and never echoes the token.
+
+## Reconnection
+
+Every close except a user Disconnect and 4401/4403 is retried with backoff
 (1 s, 2 s, 4 s … cap 30 s, ±20% jitter, 10 attempts). On `hello` the client re-sends the rate and
 start/stop the user last chose.

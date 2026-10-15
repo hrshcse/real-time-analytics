@@ -163,6 +163,8 @@ export interface ConnectionOptions {
   /** Treat the socket as dead after this long without any frame (heartbeats every 5 s). */
   heartbeatTimeoutMs?: number;
   random?: () => number;
+  /** WebSocket subprotocols to offer (protocol id + auth placeholder token). */
+  protocols?: string[];
   /** Injectable for tests. */
   WebSocketImpl?: typeof WebSocket;
   createWorker?: () => Worker;
@@ -584,7 +586,7 @@ export function createConnection(url: string, options: ConnectionOptions = {}): 
 
   function openSocket() {
     if (socket) return;
-    const ws = new WS(url);
+    const ws = new WS(url, options.protocols);
     socket = ws;
     if (status !== 'reconnecting') setStatus('connecting');
     // Every handler checks `socket === ws`. After disconnect() + connect() (React StrictMode

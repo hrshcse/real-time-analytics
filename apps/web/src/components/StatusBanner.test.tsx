@@ -22,6 +22,14 @@ describe('StatusBanner (WBS 17.4)', () => {
     expect(c.connect).toHaveBeenCalled();
   });
 
+  it('auth refusal (4401) → error explaining the token', () => {
+    show({
+      status: 'disconnected',
+      lastClose: { code: 4401, reason: 'Unauthorized', wasClean: true },
+    });
+    expect(screen.getByRole('alert')).toHaveTextContent('4401 Unauthorized');
+  });
+
   it('worker failure → error with Restart worker', () => {
     const c = show({ status: 'connected', workerError: 'boom' });
     fireEvent.click(screen.getByRole('button', { name: 'Restart worker' }));
